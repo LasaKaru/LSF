@@ -460,7 +460,24 @@ loser blocked on the winner's index entry and failed `23P01` on the *segment* in
 "that seat is taken" about a booking that was its own. The error path now re-checks the idempotency store
 first. **A duplicate submit is not a conflict.**
 
-### 9.6 Expired holds versus an immutable constraint predicate
+### 9.6 The resale-uplift counterfactual was inverted
+
+Building the admin UI exposed a modelling error in the single number the feature exists to produce.
+
+The counterfactual was *"every occupied seat sold at the full through fare"*. That credits the old regime
+with selling a 292 km ticket to a passenger travelling 29 km to Gampaha — someone who, under any regime,
+would have gone unreserved rather than buy the whole line. On seeded data it inflated the baseline to
+LKR 4,160 against LKR 3,150 actual and reported resale **losing 24%**: the exact opposite of the truth.
+
+The counterfactual is now *"each seat sold **once**, to whoever booked it first"* — the defining
+constraint of whole-journey-only ticketing. It requires no assumption about historic pricing at all, so it
+isolates what resale earned. The same data now reads a LKR 2,100 baseline and **+50.0%**, consistent with
+the +51% docs/05 §5.3 predicts for a seat carrying only a short leg.
+
+The lesson generalises: a counterfactual is a *model*, and a model that flatters or damns the thing it
+measures is worse than no number at all. This one would have been quoted at leadership.
+
+### 9.7 Expired holds versus an immutable constraint predicate
 
 The messiest part of the design, and I would not pretend otherwise. An exclusion constraint's predicate must
 be immutable, so it cannot reference `now()` and cannot distinguish a live hold from a dead one — an
@@ -490,13 +507,17 @@ alternatives ranked by the passenger's window/aisle preference and coach. The ba
 resubmits with their details intact and a fresh idempotency key. Losing a race costs one click, not a
 restart.
 
-**Admin reporting.** The brief says leadership *believes* revenue is being left on the table. The headline
-metric is **seat-km utilisation** (sold seat-km ÷ available seat-km), reported next to conventional load
-factor — because a train with every seat sold for a tenth of the route reports as 100% full under the
-conventional metric, which is exactly what hid the problem. Plus per-hop occupancy (where does the train
-empty out?), revenue by segment, **segments-per-seat** (if it is 1.0, seats are not reselling and the change
-delivered nothing), and a resale-uplift counterfactual that is **labelled as a model**, because presenting a
-modelled figure as measured fact would not survive contact with a finance department.
+**Admin dashboard** (`/admin`). The brief says leadership *believes* revenue is being left on the table.
+The headline metric is **seat-km utilisation**, deliberately shown next to conventional load factor —
+because a train with every seat sold for a tenth of the route reports as 100% full under the conventional
+metric, which is exactly what hid the problem. **The gap between those two numbers is the problem, made
+numeric.** Plus an occupancy heatmap answering "where does the train empty out?", revenue by segment, and
+**segments-per-seat** (if it is 1.0, seats are not reselling and the change delivered nothing).
+
+**Resale uplift** compares actual revenue against *each seat sold once, to whoever booked it first* — the
+defining constraint of whole-journey-only ticketing. That formulation needs no assumption about historic
+pricing, so it isolates what resale earned rather than conflating it with the separate fare-policy change.
+An earlier version compared against the full through fare and reported resale *losing* 24%; see §9.7.
 
 **Fare logic beyond distance.** Telescopic bands, scenic premium on kilometres actually travelled, bounded
 and published demand tiers, advance-purchase discounts, signed quotes, and the subadditivity guard —
@@ -532,8 +553,8 @@ here so that the default startup stays honest and fast:
 | Kafka | The **transactional outbox is real** — events are written in the same transaction and are inspectable in `outbox_event`. Only the relay's transport is absent. |
 | Waitlist service | The `SegmentReleased` events it consumes are already emitted. |
 | Payment gateway | Confirm is a state transition; no money moves. A half-integrated gateway would look like more work and be worth less than an honest seam. |
-| Admin SPA | The reporting **endpoints** exist and are queryable; there is no UI on top of them. |
 | SSE live availability | The seat map polls rather than streams. |
+| Waitlist for full segments | The `SegmentReleased` events it would consume are already emitted. |
 | Redis, Keycloak, observability stack | Config surface exists; the containers do not. |
 | i18n UI switcher | The **data** is trilingual; the interface strings are English. |
 
