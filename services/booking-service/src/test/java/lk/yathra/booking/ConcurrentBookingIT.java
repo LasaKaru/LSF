@@ -94,7 +94,13 @@ class ConcurrentBookingIT extends PostgresTestSupport {
         }
 
         List<Integer> statuses = Collections.synchronizedList(new ArrayList<>());
-        for (Future<Integer> future : pool.invokeAll(tasks, 60, TimeUnit.SECONDS)) {
+        // 180s, not 60. This test normally finishes in about 4 seconds, but 50 threads contending on
+        // one predicate lock is exactly the shape of work that a cold JIT and a shared CI runner make
+        // slow -- a first run after a full recompile was observed taking 63s here. The timeout is a
+        // deadlock backstop, nothing more; what this test asserts is the status distribution and the
+        // database state, neither of which gets weaker by allowing more wall-clock. A tight bound would
+        // only buy intermittent red on the one suite that must never be ignored.
+        for (Future<Integer> future : pool.invokeAll(tasks, 180, TimeUnit.SECONDS)) {
             statuses.add(future.get());
         }
         pool.shutdown();

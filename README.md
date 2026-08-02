@@ -187,8 +187,14 @@ consistency, which means a window in which the same seat-segment is sold twice, 
 by **cancelling a real passenger's confirmed ticket**. An airline prices that in as denied boarding. A
 state railway selling a LKR 1,200 seat to someone already standing on the platform cannot.
 
-Everything that genuinely tolerates eventual consistency — the route catalog, pricing, payments,
-waitlist, reporting — *is* a separate service.
+Everything that genuinely tolerates eventual consistency is separable, and the route catalog and pricing
+*are* separate services. Two things that the design doc lists on that side of the line are not, and the
+reason is worth stating: **reporting** reads the booking tables directly rather than a projection, because a
+read replica is a deployment decision and not an architectural one; and the **waitlist** stayed in-process
+because its matcher creates a real `HELD` booking, and putting a network call between that insert and the
+exclusion constraint that makes it safe would buy a deployment boundary at the cost of the guarantee. It
+consumes `SegmentReleased` through the outbox exactly as a remote consumer would, so the seam is real even
+though the process boundary is not.
 
 **The honest counter-argument**, which I would raise myself: booking-service is now the largest component,
 and if the department adds cargo, parcels and dining it will need splitting along *those* lines. The
@@ -519,6 +525,37 @@ defining constraint of whole-journey-only ticketing. That formulation needs no a
 pricing, so it isolates what resale earned rather than conflating it with the separate fare-policy change.
 An earlier version compared against the full through fare and reported resale *losing* 24%; see §9.7.
 
+**Segment waitlisting.** Join a queue for a leg that is sold out, and get offered the seat automatically
+when one frees up. Four decisions carry it:
+
+*It is event-driven, not polled.* Cancellations and hold expiries already emit `SegmentReleased` into the
+outbox; the matcher is a consumer. Promotion happens within a second of the release rather than on the next
+sweep, and the waitlist adds no periodic load to the booking tables.
+
+*An offer is a real hold.* The matcher creates an ordinary `HELD` booking with a 30-minute TTL — longer than
+a checkout hold, because the passenger is reacting to a notification rather than sitting at a form. It goes
+through the same exclusion constraint as every other booking, so **no waitlist bug can produce a double
+sale.** The worst this code can do is offer a seat to the wrong person or fail to offer it at all. That
+containment is why the feature was safe to add late.
+
+*Matching asks "can this person actually be seated?", not "does their leg fit in the released range?"* Those
+differ, and the difference is the whole segment story. A passenger shortening Fort→Badulla to Fort→Kandy
+cancels `[1,25)` and rebooks `[1,9)` — so the release event names the *whole* `[1,25)` even though only
+`[9,25)` came free. A containment-only match would hand that release to someone waiting on `[1,15)`, whose
+promotion then dies on the constraint, and the release is consumed with nobody seated. The query carries a
+`NOT EXISTS` against live segments on that seat, so it picks the oldest entry that can actually be seated.
+The constraint is still the backstop for genuine races; the check just removes the predictable losses.
+
+*Strictly FIFO, at a measurable cost.* A greedy matcher would pick whichever waiting entry best *fills* the
+freed stretch, maximising seat-km — and this one does not. A passenger who has watched three later arrivals
+promoted ahead of them has been treated unfairly by any reasonable standard, and "our optimiser preferred
+their journey shape" is not an answer a public operator can give. Likewise a lapsed offer returns the entry
+to its **original** queue position: `created_at` is never rewritten, so missing one notification does not
+cost your place. Both are values decisions disguised as algorithm choices, so they are stated rather than
+buried.
+
+Seven integration tests cover it, including at-least-once redelivery not promoting twice.
+
 **Fare logic beyond distance.** Telescopic bands, scenic premium on kilometres actually travelled, bounded
 and published demand tiers, advance-purchase discounts, signed quotes, and the subadditivity guard —
 see §6 and §9.1.
@@ -543,18 +580,19 @@ Stated plainly so nothing reads as a claim it is not.
 **Built and verified end to end:** the segment invariant and its proof; leg-scoped availability; seat map
 with occupancy ranges; hold → confirm with TTL, sweeper and in-transaction expiry; idempotency; the
 telescopic fare engine with signed quotes; trip publication with snapshotting; the passenger web app;
-admin reporting endpoints; nginx gateway; docker-compose; CI.
+admin reporting endpoints; the segment waitlist with event-driven promotion; nginx gateway;
+docker-compose; CI.
 
 **Designed and documented but not built** — described in `docs/` as part of the full topology, and absent
 here so that the default startup stays honest and fast:
 
 | Not built | Note |
 |---|---|
-| Kafka | The **transactional outbox is real** — events are written in the same transaction and are inspectable in `outbox_event`. Only the relay's transport is absent. |
-| Waitlist service | The `SegmentReleased` events it consumes are already emitted. |
+| Kafka | The **transactional outbox is real** — events are written in the same transaction and are inspectable in `outbox_event`. The waitlist matcher consumes them through an in-process relay that presents the same contract a broker subscription would (event type, event id, JSON payload), so moving it onto Kafka is a deployment change rather than a rewrite. Only the transport is absent. |
+| Waitlist as a **separate service** | The waitlist itself is built and tested (§10). It runs inside the booking service rather than as its own deployable, because splitting it would put the matcher's `HELD` insert on the far side of a network call from the constraint that makes it safe. |
+| Waitlist **notifications** | Promotion publishes a `WaitlistPromoted` event carrying the contact address; nothing sends the email or SMS. The offer is still discoverable by polling the entry. |
 | Payment gateway | Confirm is a state transition; no money moves. A half-integrated gateway would look like more work and be worth less than an honest seam. |
 | SSE live availability | The seat map polls rather than streams. |
-| Waitlist for full segments | The `SegmentReleased` events it would consume are already emitted. |
 | Redis, Keycloak, observability stack | Config surface exists; the containers do not. |
 | i18n UI switcher | The **data** is trilingual; the interface strings are English. |
 
@@ -597,6 +635,7 @@ production.
 4. `services/booking-service/.../availability/AvailabilityService.java` — the read path
 5. `services/booking-service/src/test/.../ConcurrentBookingIT.java` — **the proof**
 6. `web/passenger-app/src/components/SeatMap.tsx` — the tri-state UI
+7. `services/booking-service/.../waitlist/WaitlistRepository.java` — matching on *seatability*, not containment
 
 ---
 

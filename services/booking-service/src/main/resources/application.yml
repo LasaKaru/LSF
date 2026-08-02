@@ -66,6 +66,7 @@ yathra:
     retry-backoff-ms: ${BOOKING_RETRY_BACKOFF_MS:50}
     turnaround-buffer-stops: ${SEGMENT_TURNAROUND_BUFFER_STOPS:0}
     seat-selection-strategy: ${SEAT_SELECTION_STRATEGY:FRAGMENTATION_MINIMISING}
+    outbox-relay-interval-ms: ${OUTBOX_RELAY_INTERVAL_MS:1000}
     quote-signing-key: ${QUOTE_SIGNING_KEY}
 
 springdoc:

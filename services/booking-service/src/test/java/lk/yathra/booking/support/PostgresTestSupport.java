@@ -24,6 +24,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
  * The container is created lazily and only in the second case, so a machine without a Docker daemon
  * never fails at class-initialisation time.
  */
+@org.springframework.context.annotation.Import(NoOpLockConfig.class)
 public abstract class PostgresTestSupport {
 
     private static final String IMAGE = "postgres:16-alpine";
@@ -68,6 +69,12 @@ public abstract class PostgresTestSupport {
         // (300 is the @Max on this property -- a larger value makes the service refuse to start, which
         // is the intended behaviour and was caught by this very test run.)
         registry.add("yathra.booking.sweep-interval-seconds", () -> "300");
+        // Park the outbox relay's timer an hour out. Tests call drain() explicitly so they can assert
+        // immediately afterwards; leaving the 1s timer running meant the background thread claimed the
+        // event first (SKIP LOCKED), the test's own drain found nothing, and the assertion ran before
+        // the background promotion had committed. The symptom looked exactly like "the matcher does not
+        // match" -- it was the harness racing itself.
+        registry.add("yathra.booking.outbox-relay-interval-ms", () -> "3600000");
     }
 
     private static String envOrDefault(String name, String fallback) {
