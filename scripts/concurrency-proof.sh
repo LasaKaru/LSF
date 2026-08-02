@@ -82,16 +82,24 @@ def fresh_seat(frm="CMB", to="BDL"):
 
 def race(seat_id, legs, n):
     """Fire n booking requests that all begin within the same instant."""
-    # Quotes are fetched sequentially, up front. Only the booking POST belongs in
-    # the race: quoting concurrently would just be load-testing the pricing
-    # service and would blur what this is meant to prove.
+    # ONE quote per distinct leg, fetched up front and shared by every thread
+    # requesting that leg.
+    #
+    # Two reasons. Only the booking POST belongs in the race -- quoting
+    # concurrently would load-test the pricing service and blur what this proves.
+    # And a quote is a price for a leg, not a claim on a seat: fifty passengers
+    # asking the fare for Fort->Kandy legitimately get the same answer, so
+    # fetching it fifty times tests nothing and merely burns the edge's rate
+    # budget.
+    quotes = {leg: quote(*leg) for leg in legs}
+
     bodies = []
     for i in range(n):
         frm, to = legs[i % len(legs)]
         bodies.append({
             "tripId": trip_id, "from": frm, "to": to,
             "seatSelection": {"mode": "SPECIFIC", "seatIds": [seat_id]},
-            "quote": quote(frm, to),
+            "quote": quotes[(frm, to)],
             "passengers": [{"name": "Racer", "type": "ADULT"}],
             "contact": {"email": f"race-{uuid.uuid4()}@example.lk", "name": "Racer"},
         })
