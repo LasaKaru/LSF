@@ -108,6 +108,46 @@ export type Quote = {
   signature: string;
 };
 
+/**
+ * The subset of a quote that the server re-verifies against its HMAC signature.
+ *
+ * Every field here is covered by that signature, so dropping one or rounding one
+ * is not a cosmetic slip — it makes the quote fail verification. Both the booking
+ * path and the waitlist path send exactly this, built by {@link quoteRef}, so the
+ * two cannot drift apart.
+ */
+export type QuoteRef = {
+  quoteId: string;
+  tripId: string;
+  fromSeq: number;
+  toSeq: number;
+  classCode: string;
+  coachType: string;
+  passengers: number;
+  unitFareMinor: number;
+  totalMinor: number;
+  currency: string;
+  ruleSetVersion: string;
+  expiresAt: string;
+  signature: string;
+};
+
+export const quoteRef = (q: Quote): QuoteRef => ({
+  quoteId: q.quoteId,
+  tripId: q.tripId,
+  fromSeq: q.fromSeq,
+  toSeq: q.toSeq,
+  classCode: q.classCode,
+  coachType: q.coachType,
+  passengers: q.passengers,
+  unitFareMinor: q.unitFareMinor,
+  totalMinor: q.totalMinor,
+  currency: q.currency,
+  ruleSetVersion: q.ruleSetVersion,
+  expiresAt: q.expiresAt,
+  signature: q.signature,
+});
+
 export type BookingSegment = {
   seatId: string;
   seatLabel: string;
@@ -129,6 +169,29 @@ export type Booking = {
   totalMinor: number;
   currency: string;
   segments: BookingSegment[];
+};
+
+/**
+ * A place in the queue for a sold-out leg.
+ *
+ * `status` walks WAITING → OFFERED → CONVERTED. In OFFERED, `offeredBookingId`
+ * points at a real held booking that expires at `offerExpiresAt` — confirming it
+ * is the ordinary confirm call, not a waitlist-specific one.
+ */
+export type WaitlistEntry = {
+  id: string;
+  tripId: string;
+  from: string;
+  to: string;
+  classCode: string;
+  status: 'WAITING' | 'OFFERED' | 'CONVERTED' | 'CANCELLED' | 'EXPIRED';
+  position: number;
+  queueLength: number;
+  fareMinor: number;
+  currency: string;
+  offeredBookingId?: string;
+  offerExpiresAt?: string;
+  createdAt: string;
 };
 
 /** RFC 9457 problem detail, with the extension members that make a 409 recoverable. */
@@ -218,6 +281,34 @@ export const api = {
 
   confirm: (bookingId: string) =>
     request<Booking>(`/api/v1/bookings/${bookingId}/confirm`, { method: 'POST' }),
+
+  joinWaitlist: (body: {
+    tripId: string;
+    from: string;
+    to: string;
+    classCode: string;
+    name: string;
+    email: string;
+    phone?: string;
+    quote: QuoteRef;
+  }) => request<WaitlistEntry>('/api/v1/waitlist', { method: 'POST', body: JSON.stringify(body) }),
+
+  waitlistStatus: (id: string) => request<WaitlistEntry>(`/api/v1/waitlist/${id}`),
+
+  leaveWaitlist: async (id: string, email: string) => {
+    // 204 No Content, so this one cannot go through request(): there is no JSON body to parse.
+    const response = await fetch(`/api/v1/waitlist/${id}?email=${encodeURIComponent(email)}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      throw new ApiError({
+        status: response.status,
+        code: 'LEAVE_FAILED',
+        title: 'Could not leave the waitlist',
+        detail: 'That entry could not be found, or the email did not match.',
+      });
+    }
+  },
 };
 
 export const money = (minor: number, currency = 'LKR') =>

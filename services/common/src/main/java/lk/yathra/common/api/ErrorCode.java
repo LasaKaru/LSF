@@ -16,6 +16,10 @@ public enum ErrorCode {
     UNAUTHENTICATED(HttpStatus.UNAUTHORIZED, "Authentication required"),
     FORBIDDEN(HttpStatus.FORBIDDEN, "Not permitted"),
 
+    /** No route matches the URL at all — a typo or a stale client, not a missing entity. */
+    ROUTE_NOT_FOUND(HttpStatus.NOT_FOUND, "No such endpoint"),
+    METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "Method not allowed for this endpoint"),
+
     TRIP_NOT_FOUND(HttpStatus.NOT_FOUND, "Trip not found"),
     BOOKING_NOT_FOUND(HttpStatus.NOT_FOUND, "Booking not found"),
     SEAT_NOT_FOUND(HttpStatus.NOT_FOUND, "Seat not found"),

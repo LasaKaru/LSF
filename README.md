@@ -554,7 +554,17 @@ to its **original** queue position: `created_at` is never rewritten, so missing 
 cost your place. Both are values decisions disguised as algorithm choices, so they are stated rather than
 buried.
 
-Seven integration tests cover it, including at-least-once redelivery not promoting twice.
+*In the UI, "sold out" stops being a dead end.* The disabled button on a full train becomes **"Sold out ·
+join waitlist"**, and the panel behind it is really three screens: join, your position in the queue, and
+— when a seat frees — an offer with a live countdown, rendered from the server's expiry rather than a
+locally counted duration so a sleeping laptop cannot show more time than there is. The copy says the seat is
+*held*, not that one is available to go and race for, because that is the truth and a passenger who assumed
+otherwise would lose it. The entry id is kept in `localStorage`: there is no login here, and losing your
+place because you closed a tab is exactly the unfairness the FIFO rules exist to prevent.
+
+Seven integration tests cover the backend, including at-least-once redelivery not promoting twice, and the
+whole journey was driven end to end over HTTP and then again through a real browser — sell out a train,
+join, cancel a booking, watch the offer arrive, confirm it, land on a ticket.
 
 **Fare logic beyond distance.** Telescopic bands, scenic premium on kilometres actually travelled, bounded
 and published demand tiers, advance-purchase discounts, signed quotes, and the subadditivity guard —

@@ -12,8 +12,11 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 /**
  * Translates exceptions into RFC 9457 {@code application/problem+json}.
@@ -74,6 +77,37 @@ public class GlobalExceptionHandler {
     public ProblemDetail handleIllegalArgument(IllegalArgumentException ex, HttpServletRequest request) {
         // Leg.of() rejects degenerate and inverted ranges this way.
         return base(ErrorCode.INVALID_JOURNEY_LEG, ex.getMessage(), request);
+    }
+
+    /**
+     * An unmatched URL or a wrong verb is the caller's mistake, not the server's.
+     *
+     * <p>Without this, Spring's resource handler is the last thing to see the request and throws
+     * {@code NoResourceFoundException}, which falls into the catch-all below and is reported as a
+     * <b>500</b> — with a stack trace logged at ERROR. A typo in a URL then looks exactly like the
+     * service falling over, which is how an on-call engineer gets woken for a curl mistake. Found by
+     * driving the API over HTTP; no test caught it, because tests call the controllers directly and
+     * never exercise the dispatcher's miss path.
+     */
+    @ExceptionHandler({NoResourceFoundException.class, NoHandlerFoundException.class})
+    public ProblemDetail handleNoRoute(Exception ex, HttpServletRequest request) {
+        return base(ErrorCode.ROUTE_NOT_FOUND, "No endpoint matches " + request.getRequestURI(), request);
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ProblemDetail handleBadMethod(
+            HttpRequestMethodNotSupportedException ex, HttpServletRequest request) {
+        return base(
+                ErrorCode.METHOD_NOT_ALLOWED,
+                ex.getMethod() + " is not supported here. Supported: " + String.join(", ", supported(ex)),
+                request);
+    }
+
+    private static java.util.Set<String> supported(HttpRequestMethodNotSupportedException ex) {
+        var methods = ex.getSupportedHttpMethods();
+        return methods == null
+                ? java.util.Set.of()
+                : methods.stream().map(Object::toString).collect(Collectors.toCollection(java.util.TreeSet::new));
     }
 
     @ExceptionHandler(Exception.class)

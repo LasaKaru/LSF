@@ -94,6 +94,15 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .banner.error { background: rgba(194,69,63,.14); border-color: var(--danger); }
 .alts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
 
+/* ---------------------------------------------------------------- waitlist */
+/* Tabular figures so the seconds digit does not shove the rest of the clock
+   sideways once a second -- a countdown that jitters reads as broken. */
+.countdown {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.15rem; font-weight: 600; margin: 4px 0 14px;
+}
+.countdown.urgent { color: var(--amber); }
+
 /* ------------------------------------------------------------------- trips */
 .triplist { list-style: none; margin: 0; padding: 0; }
 .triplist li {

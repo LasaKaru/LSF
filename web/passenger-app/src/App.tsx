@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ApiError, api, money, time } from './api';
+import { ApiError, api, money, quoteRef, time } from './api';
 import type { Availability, Booking, Problem, Quote, Seat, SeatMap as SeatMapData, Station, Trip } from './api';
 import { SeatMap } from './components/SeatMap';
+import { Waitlist } from './components/Waitlist';
 
-type Step = 'search' | 'trips' | 'seats' | 'details' | 'ticket';
+type Step = 'search' | 'trips' | 'seats' | 'details' | 'ticket' | 'waitlist';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const inDays = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
@@ -91,6 +92,28 @@ export default function App() {
     }
   }
 
+  /**
+   * Sold out for this leg — offer the queue instead of a dead end.
+   *
+   * <p>Still fetches a quote, because joining the waitlist locks the fare at
+   * today's price. The seat map is skipped: there is no seat to show, and asking
+   * the passenger to look at a wall of grey before telling them it is full would
+   * be a worse way to deliver the same news.
+   */
+  async function joinQueueFor(t: Trip) {
+    setBusy(true);
+    setError(null);
+    setTrip(t);
+    try {
+      setQuote(await api.quote(t.id, from, to, 1));
+      setStep('waitlist');
+    } catch (e) {
+      setError(e instanceof ApiError ? e.problem.detail : 'Could not price this journey.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // ------------------------------------------------------------------ book
 
   async function submit(seatOverride?: Seat) {
@@ -108,21 +131,7 @@ export default function App() {
           from,
           to,
           seatSelection: { mode: 'SPECIFIC', seatIds: [chosen.seatId] },
-          quote: {
-            quoteId: quote.quoteId,
-            tripId: quote.tripId,
-            fromSeq: quote.fromSeq,
-            toSeq: quote.toSeq,
-            classCode: quote.classCode,
-            coachType: quote.coachType,
-            passengers: quote.passengers,
-            unitFareMinor: quote.unitFareMinor,
-            totalMinor: quote.totalMinor,
-            currency: quote.currency,
-            ruleSetVersion: quote.ruleSetVersion,
-            expiresAt: quote.expiresAt,
-            signature: quote.signature,
-          },
+          quote: quoteRef(quote),
           passengers: [{ name: name || 'Passenger', type: 'ADULT' }],
           contact: { email, name: name || 'Passenger' },
         },
@@ -246,13 +255,18 @@ export default function App() {
                       ) : '…'}
                     </div>
                   </div>
-                  <button
-                    className="primary"
-                    disabled={busy || (a && a.totalAvailable === 0)}
-                    onClick={() => chooseTrip(t)}
-                  >
-                    {a && a.totalAvailable === 0 ? 'Sold out' : 'Choose seat'}
-                  </button>
+                  {/* Sold out is not a dead end -- it is the entry point to the
+                      queue. A seat on this line frees up every time someone
+                      leaves partway, so "full" is very often temporary. */}
+                  {a && a.totalAvailable === 0 ? (
+                    <button className="primary" disabled={busy} onClick={() => joinQueueFor(t)}>
+                      Sold out · join waitlist
+                    </button>
+                  ) : (
+                    <button className="primary" disabled={busy} onClick={() => chooseTrip(t)}>
+                      Choose seat
+                    </button>
+                  )}
                 </li>
               );
             })}
@@ -362,6 +376,26 @@ export default function App() {
           </button>
           {!email && <p className="muted small">An email address is needed to retrieve your booking.</p>}
         </section>
+      )}
+
+      {/* ----------------------------------------------------- 4b. waitlist */}
+      {step === 'waitlist' && trip && (
+        <Waitlist
+          trip={trip}
+          from={from}
+          to={to}
+          fromName={stationName(from)}
+          toName={stationName(to)}
+          quote={quote}
+          onBack={() => setStep('trips')}
+          // A confirmed offer is an ordinary confirmed booking, so it lands on
+          // the ordinary ticket screen. Nothing about arriving via the queue
+          // makes the resulting ticket a different kind of thing.
+          onTicket={(confirmed) => {
+            setBooking(confirmed);
+            setStep('ticket');
+          }}
+        />
       )}
 
       {/* ------------------------------------------------------- 5. ticket */}
