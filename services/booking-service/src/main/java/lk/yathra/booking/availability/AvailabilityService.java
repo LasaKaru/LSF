@@ -90,7 +90,7 @@ public class AvailabilityService {
                           LEFT JOIN trip_seat s ON s.trip_coach_id = c.id AND s.is_bookable
                          WHERE c.trip_id = :tripId
                            AND c.is_reservable
-                           AND (:classCode IS NULL OR c.class_code = CAST(:classCode AS class_enum))
+                           AND (CAST(:classCode AS text) IS NULL OR c.class_code::text = CAST(:classCode AS text))
                          GROUP BY c.coach_number, c.class_code, c.is_reservable, c.position_index
                          ORDER BY c.position_index
                         """
@@ -128,7 +128,7 @@ public class AvailabilityService {
                  WHERE s.trip_id = :tripId
                    AND c.is_reservable
                    AND s.is_bookable
-                   AND (:classCode IS NULL OR c.class_code = CAST(:classCode AS class_enum))
+                   AND (CAST(:classCode AS text) IS NULL OR c.class_code::text = CAST(:classCode AS text))
                    AND NOT %s
                  ORDER BY c.position_index, s.row_index, s.seat_label
                 """

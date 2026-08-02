@@ -111,13 +111,13 @@ public class TripRepository {
                   FROM trip t
                  WHERE t.service_date = :date
                    AND t.status = 'PUBLISHED'
-                   AND (:routeCode IS NULL OR t.route_code = :routeCode)
-                   AND (:fromCode IS NULL OR :toCode IS NULL OR EXISTS (
+                   AND (CAST(:routeCode AS text) IS NULL OR t.route_code = CAST(:routeCode AS text))
+                   AND (CAST(:fromCode AS text) IS NULL OR CAST(:toCode AS text) IS NULL OR EXISTS (
                          SELECT 1 FROM trip_stop f
                            JOIN trip_stop x ON x.trip_id = f.trip_id
                           WHERE f.trip_id = t.id
-                            AND f.station_code = :fromCode
-                            AND x.station_code = :toCode
+                            AND f.station_code = CAST(:fromCode AS text)
+                            AND x.station_code = CAST(:toCode AS text)
                             AND f.stop_sequence < x.stop_sequence))
                  ORDER BY t.departs_at
                 """,
@@ -191,7 +191,7 @@ public class TripRepository {
                  WHERE s.trip_id = :tripId
                    AND c.is_reservable
                    AND s.is_bookable
-                   AND (:classCode IS NULL OR c.class_code = CAST(:classCode AS class_enum))
+                   AND (CAST(:classCode AS text) IS NULL OR c.class_code::text = CAST(:classCode AS text))
                  ORDER BY c.position_index, s.row_index, s.seat_label
                 """,
                 new MapSqlParameterSource().addValue("tripId", tripId).addValue("classCode", classCode),

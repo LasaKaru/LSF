@@ -131,6 +131,24 @@ public class BookingService {
                 return new CreateOutcome(response, false);
 
             } catch (DataAccessException e) {
+                // Before classifying this as anything else: did a concurrent request carrying OUR
+                // idempotency key just commit?
+                //
+                // This matters more than it looks. Two identical submits race; the loser blocks on the
+                // winner's index entry and, when the winner commits, fails with 23P01 -- the exclusion
+                // violation fires on the segment insert, which happens BEFORE the idempotency record
+                // is written, so the unique-violation path never gets a chance. Without this check the
+                // loser reports "that seat is taken" to a passenger whose own booking succeeded a
+                // millisecond earlier.
+                //
+                // The lookup is safe and deterministic here: we only unblocked because the winner's
+                // transaction completed, so its idempotency record is committed and visible to the new
+                // snapshot this read takes.
+                var concurrentWinner = idempotency.lookup(idempotencyKey, requestHash);
+                if (concurrentWinner.isPresent()) {
+                    return new CreateOutcome(deserialise(concurrentWinner.get().body()), true);
+                }
+
                 if (SqlStates.isSegmentOverlap(e)) {
                     // Somebody committed an overlapping segment while we were writing ours. On an
                     // AUTO selection a different seat may well be free, so one more pass is worth it
@@ -141,15 +159,6 @@ public class BookingService {
                         continue;
                     }
                     throw seatUnavailable(journey, seatIds, request);
-                }
-
-                if (SqlStates.is(e, SqlStates.UNIQUE_VIOLATION)) {
-                    // A concurrent request with the same Idempotency-Key beat us to the insert. The
-                    // winner's response is now visible, so return it rather than failing the caller.
-                    var winner = idempotency.lookup(idempotencyKey, requestHash);
-                    if (winner.isPresent()) {
-                        return new CreateOutcome(deserialise(winner.get().body()), true);
-                    }
                 }
 
                 if (SqlStates.isRetryable(e) && attempt < attempts) {
