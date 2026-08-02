@@ -1,0 +1,56 @@
+# ---------------------------------------------------------------------------
+# Secrets first. This file exists in the first commit, before any .env can.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+secrets/
+**/application-local.yml
+
+# Java / Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+.mvn/timing.properties
+*.class
+*.jar
+*.war
+hs_err_pid*
+replay_pid*
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+coverage/
+playwright-report/
+test-results/
+.playwright/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+!.vscode/extensions.json
+.settings/
+.project
+.classpath
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build / tooling output
+*.log
+.gradle/
+build/
+/tmp/
