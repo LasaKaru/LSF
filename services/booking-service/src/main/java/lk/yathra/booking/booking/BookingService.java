@@ -195,11 +195,34 @@ public class BookingService {
                         request.seatSelection() == null ? null : request.seatSelection().window(),
                         request.seatSelection() == null ? null : request.seatSelection().aisle());
 
-        List<AlternativeSeat> alternatives = new ArrayList<>();
+        // Rank alternatives against what the passenger actually asked for, rather than offering
+        // whatever happens to be first. Losing a race should cost one click, and "seat 3C is also a
+        // window seat in your coach" is a one-click offer in a way that "seat 12B" is not.
+        var lostSeats = bookings.findSeatMeta(attemptedSeatIds);
+        boolean wantedWindow =
+                prefs.window() != null
+                        ? prefs.window()
+                        : lostSeats.stream().anyMatch(BookingRepository.SeatMeta::window);
+        String preferredCoach =
+                lostSeats.stream().map(BookingRepository.SeatMeta::coachNumber).findFirst().orElse(null);
+
         var freeIds = availability.freeSeatIds(journey.tripId(), journey.leg(), null);
-        for (var meta : bookings.findSeatMeta(freeIds.stream().limit(5).toList())) {
-            alternatives.add(new AlternativeSeat(meta.id(), meta.label(), meta.coachNumber(), meta.window()));
-        }
+        List<AlternativeSeat> alternatives =
+                bookings.findSeatMeta(freeIds).stream()
+                        .sorted(
+                                java.util.Comparator
+                                        // same window/aisle character as the seat they lost
+                                        .comparingInt((BookingRepository.SeatMeta m) -> m.window() == wantedWindow ? 0 : 1)
+                                        // then the same coach, so a travelling party stays together
+                                        .thenComparingInt(m -> m.coachNumber().equals(preferredCoach) ? 0 : 1)
+                                        .thenComparing(BookingRepository.SeatMeta::coachNumber)
+                                        // by row NUMBER, not by label: lexicographic label order puts
+                                        // "10B" ahead of "2B", which reads as arbitrary to a passenger
+                                        .thenComparingInt(BookingRepository.SeatMeta::rowIndex)
+                                        .thenComparing(BookingRepository.SeatMeta::label))
+                        .limit(5)
+                        .map(m -> new AlternativeSeat(m.id(), m.label(), m.coachNumber(), m.window()))
+                        .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
 
         String seatNames =
                 conflicts.stream().map(BookingDtos.ConflictDetail::seatLabel).distinct().reduce((a, b) -> a + ", " + b).orElse("The selected seat(s)");

@@ -317,7 +317,7 @@ public class BookingRepository {
         }
         return jdbc.query(
                 """
-                SELECT s.id, s.seat_label, c.coach_number, c.class_code::text AS class_code,
+                SELECT s.id, s.seat_label, s.row_index, c.coach_number, c.class_code::text AS class_code,
                        c.coach_type::text AS coach_type, s.is_window, c.is_reservable, s.is_bookable
                   FROM trip_seat s JOIN trip_coach c ON c.id = s.trip_coach_id
                  WHERE s.id IN (:seatIds)
@@ -327,6 +327,7 @@ public class BookingRepository {
                         new SeatMeta(
                                 rs.getObject("id", UUID.class),
                                 rs.getString("seat_label"),
+                                rs.getInt("row_index"),
                                 rs.getString("coach_number"),
                                 rs.getString("class_code"),
                                 rs.getString("coach_type"),
@@ -338,6 +339,7 @@ public class BookingRepository {
     public record SeatMeta(
             UUID id,
             String label,
+            int rowIndex,
             String coachNumber,
             String classCode,
             String coachType,
