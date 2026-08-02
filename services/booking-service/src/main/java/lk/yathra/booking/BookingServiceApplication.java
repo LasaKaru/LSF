@@ -5,7 +5,6 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.ComponentScan;
-import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * booking-service owns INV-1 -- the guarantee that no two active segments overlap on one seat -- and
@@ -19,7 +18,6 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @SpringBootApplication
 @ComponentScan(basePackages = {"lk.yathra.booking", "lk.yathra.common"})
 @EnableConfigurationProperties(BookingProperties.class)
-@EnableScheduling
 public class BookingServiceApplication {
 
     public static void main(String[] args) {

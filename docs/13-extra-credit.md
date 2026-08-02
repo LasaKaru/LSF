@@ -82,6 +82,35 @@ released = [9,25)  →  matches [9,25), [9,15), [12,20), [15,25)
                    →  does not match [1,15)  (extends before the release)
 ```
 
+**Containment is necessary but not sufficient — found in implementation.** The rule above was the whole
+matching predicate as designed, and it is wrong in the case this system exists to serve. A release event
+names the stretch a booking *gave up*, not the stretch that is *free now*. When a passenger shortens
+Fort→Badulla to Fort→Kandy, the cancel emits `[1,25)` and the rebook immediately takes `[1,9)` — so the
+release advertises far more than actually came free:
+
+```
+released    = [1,25)   (the cancelled booking)
+rebooked    = [1,9)    (the shortened journey, committed moments later)
+actually free = [9,25)
+
+entry [1,15) → passes containment, but the seat is occupied 1..9
+             → the promotion dies on the exclusion constraint
+             → the release is consumed, and the entry waiting on [9,25) is never offered
+```
+
+The shipped query therefore also carries a `NOT EXISTS` against live segments on that seat, so it selects
+the oldest entry that can *actually be seated*. This is a filter, not a replacement for the constraint: it
+is read outside the insert, so a booking committed a microsecond later still wins the race and the
+constraint still rejects the promotion. It removes the *predictable* collisions, not the racing ones.
+
+**As built.** The matcher runs inside booking-service rather than as a separate `waitlist-service`, and
+consumes `SegmentReleased` through an in-process outbox relay rather than Kafka. The consumer contract is
+the same one a broker subscription would present — event type, event id, JSON payload — and the dedupe
+below is unchanged, so the split is a deployment change rather than a rewrite. The reason it stayed
+in-process is on the previous point: the matcher's promotion is a real `HELD` insert, and putting a
+network hop between that insert and the constraint that makes it safe would trade the guarantee for a
+process boundary.
+
 **The offer is a real hold.** The matcher creates an ordinary `HELD` booking with a 30-minute TTL,
 subject to the same exclusion constraint as any other booking. Nothing about the waitlist bypasses the
 invariant, which means the waitlist cannot introduce a double-sale even if its matching logic is wrong.

@@ -24,7 +24,6 @@ import org.testcontainers.containers.PostgreSQLContainer;
  * The container is created lazily and only in the second case, so a machine without a Docker daemon
  * never fails at class-initialisation time.
  */
-@org.springframework.context.annotation.Import(NoOpLockConfig.class)
 public abstract class PostgresTestSupport {
 
     private static final String IMAGE = "postgres:16-alpine";
@@ -63,17 +62,28 @@ public abstract class PostgresTestSupport {
         // Deterministic, and long enough that no test races the sweeper by accident.
         registry.add("yathra.booking.hold-ttl-seconds", () -> "600");
         registry.add("yathra.booking.quote-signing-key", () -> TestKeys.QUOTE_SIGNING_KEY);
-        // Push the sweeper out to its configured maximum. Hold expiry is exercised explicitly where it
-        // matters; leaving it on a 15s timer would let it fire in the middle of unrelated tests and
-        // make them intermittently flaky, which is how a suite stops being trusted.
-        // (300 is the @Max on this property -- a larger value makes the service refuse to start, which
-        // is the intended behaviour and was caught by this very test run.)
+
+        // No background timers in tests. This one property switches off @EnableScheduling and, with it,
+        // ShedLock's @SchedulerLock processing -- see SchedulingConfig.
+        //
+        // Every test here drives the relay and the sweepers by calling them, so that it can assert on
+        // the very next line. A timer running alongside that is pure interference, and it produced two
+        // separate false diagnoses before this was understood:
+        //
+        //   * The background relay claimed events first (FOR UPDATE SKIP LOCKED), so a test's own
+        //     drain() found nothing and asserted before the background promotion had committed. That
+        //     reads exactly like "the waitlist matcher does not match".
+        //   * The offer sweeper deadlocked in CI against a test's TRUNCATE -- the sweeper takes
+        //     AccessShare on `booking` through its subquery while TRUNCATE wants AccessExclusive.
+        //
+        // Pushing the intervals out does NOT fix either: a fixedDelay task fires immediately at startup
+        // whatever its interval, and each test class builds its own context. Off is off.
+        registry.add("yathra.scheduling.enabled", () -> "false");
+
+        // Still set, because they are validated configuration rather than scheduling policy: 300 is the
+        // @Max on the sweep interval, and a larger value makes the service refuse to start -- which is
+        // the intended behaviour, and was itself caught by a test run.
         registry.add("yathra.booking.sweep-interval-seconds", () -> "300");
-        // Park the outbox relay's timer an hour out. Tests call drain() explicitly so they can assert
-        // immediately afterwards; leaving the 1s timer running meant the background thread claimed the
-        // event first (SKIP LOCKED), the test's own drain found nothing, and the assertion ran before
-        // the background promotion had committed. The symptom looked exactly like "the matcher does not
-        // match" -- it was the harness racing itself.
         registry.add("yathra.booking.outbox-relay-interval-ms", () -> "3600000");
     }
 

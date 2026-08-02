@@ -87,6 +87,7 @@ of how well the feature works.
 | `OUTBOX_TRANSPORT` | `log` (core) / `kafka` (full) | **The only difference between profiles.** No code path branches on it beyond the adapter |
 | `KAFKA_BOOTSTRAP_SERVERS` | `kafka:9092` | |
 | `OUTBOX_RELAY_INTERVAL_MS` | `500` | Poll cadence |
+| `yathra.scheduling.enabled` | `true` | Master switch for all background timers (hold sweeper, outbox relay, waitlist offer sweeper) **and** ShedLock's `@SchedulerLock` processing. Only ever set `false` by the integration tests, which call those methods directly so they can assert on the next line; a `fixedDelay` task fires immediately at startup regardless of its interval, so lengthening the intervals is not a substitute for switching it off |
 | `REDIS_URL` | `redis://redis:6379` | Cache, rate limits, idempotency index |
 | `AVAILABILITY_CACHE_TTL_SECONDS` | `5` | Short — availability is volatile |
 | `SSE_ENABLED` | `true` | Falls back to ETag polling |
