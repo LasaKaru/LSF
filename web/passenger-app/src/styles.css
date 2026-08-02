@@ -1,0 +1,158 @@
+/* ---------------------------------------------------------------------------
+   Plain CSS, no framework.
+   The whole stylesheet is a few kilobytes: on a congested mobile network in the
+   target market that is worth more than the convenience of a utility framework.
+   --------------------------------------------------------------------------- */
+
+:root {
+  --bg: #0f1720;
+  --surface: #17212b;
+  --surface-2: #1f2b38;
+  --line: #2b3947;
+  --text: #e8edf2;
+  --muted: #93a3b3;
+  --accent: #2f9e6e;
+  --accent-hover: #38b57f;
+  --amber: #c98a1e;
+  --danger: #c2453f;
+  --radius: 10px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f4f6f8;
+    --surface: #ffffff;
+    --surface-2: #eef2f5;
+    --line: #d6dee6;
+    --text: #16212c;
+    --muted: #5d6f80;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Sinhala", "Noto Sans Tamil", sans-serif;
+}
+
+.app { max-width: 860px; margin: 0 auto; padding: 24px 16px 64px; }
+
+header h1 { font-size: 1.5rem; margin: 0 0 4px; }
+.tagline { color: var(--muted); margin: 0 0 20px; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+h2 { font-size: 1.1rem; margin: 0 0 14px; }
+h3 { font-size: .95rem; margin: 0 0 8px; }
+
+.muted { color: var(--muted); }
+.small { font-size: .85rem; }
+
+.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px; }
+.row label { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; color: var(--muted); flex: 1 1 160px; }
+
+select, input {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 10px;
+  font: inherit;
+  min-width: 0;
+}
+select:focus-visible, input:focus-visible, button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid transparent; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+
+.primary { background: var(--accent); color: #fff; padding: 10px 16px; font-weight: 600; }
+.primary:hover:not(:disabled) { background: var(--accent-hover); }
+.primary.small { padding: 6px 10px; font-size: .85rem; }
+
+.link { background: none; color: var(--accent); padding: 0 4px; text-decoration: underline; border: none; }
+
+.swap { background: var(--surface-2); border: 1px solid var(--line); color: var(--text); padding: 9px 12px; align-self: flex-end; }
+
+.crumbs { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; color: var(--muted); font-size: .9rem; }
+
+/* ------------------------------------------------------------------ banners */
+.banner { padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; border: 1px solid; }
+.banner.info  { background: rgba(47,158,110,.12); border-color: var(--accent); }
+.banner.warn  { background: rgba(201,138,30,.14); border-color: var(--amber); }
+.banner.error { background: rgba(194,69,63,.14); border-color: var(--danger); }
+.alts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+
+/* ------------------------------------------------------------------- trips */
+.triplist { list-style: none; margin: 0; padding: 0; }
+.triplist li {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 12px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap;
+}
+.triplist li:last-child { border-bottom: none; }
+
+/* ---------------------------------------------------------------- seat map */
+.coachtabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; font-size: .85rem; color: var(--muted); }
+.coachtabs .on { color: var(--text); font-weight: 600; }
+
+.seatmap-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: .8rem; color: var(--muted); margin-bottom: 12px; }
+.swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; border: 1px solid var(--line); }
+
+.seatmap-grid { display: flex; flex-direction: column; gap: 6px; overflow-x: auto; padding-bottom: 6px; }
+.seatmap-row { display: flex; align-items: center; gap: 6px; }
+.seatmap-rownum { width: 20px; text-align: right; color: var(--muted); font-size: .75rem; flex: none; }
+.has-aisle { margin-right: 18px; }
+
+.seat {
+  width: 46px; height: 38px; border-radius: 6px; font-size: .78rem; font-weight: 600;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--text);
+}
+.seat-blank { display: inline-block; background: none; border: 1px dashed var(--line); opacity: .35; }
+
+.s-available { background: rgba(47,158,110,.22); border-color: var(--accent); }
+.s-available:hover { background: rgba(47,158,110,.4); }
+/* Amber: free for PART of your leg. This state does not exist in
+   whole-journey booking - it is the visible signature of segment inventory. */
+.s-partial   { background: rgba(201,138,30,.22); border-color: var(--amber); color: var(--muted); }
+.s-taken     { background: var(--surface-2); color: var(--muted); opacity: .55; }
+.s-selected  { background: #2563eb; border-color: #2563eb; color: #fff; }
+
+/* ------------------------------------------------------------- occupancy */
+.occupancy { margin-top: 16px; font-size: .85rem; }
+.occupancy summary { cursor: pointer; color: var(--muted); }
+.occupancy ul { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.occupancy li { display: grid; grid-template-columns: 40px 1fr auto; gap: 10px; align-items: center; }
+.occ-label { font-weight: 600; }
+.occ-bar { position: relative; height: 14px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
+.occ-bar i { position: absolute; top: 0; height: 100%; background: var(--muted); opacity: .55; }
+.occ-bar .occ-you { position: absolute; top: 0; height: 100%; border: 2px solid var(--accent); border-radius: 4px; background: none; }
+.occ-text { color: var(--muted); font-size: .78rem; white-space: nowrap; }
+
+/* ------------------------------------------------------------------- fare */
+.fare ul { list-style: none; margin: 0 0 16px; padding: 0; }
+.fare li { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px dashed var(--line); font-size: .9rem; }
+.fare li.total { font-weight: 700; border-bottom: none; border-top: 2px solid var(--line); margin-top: 6px; padding-top: 10px; }
+
+/* ----------------------------------------------------------------- ticket */
+.ticketgrid { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; margin: 0 0 18px; }
+.ticketgrid dt { color: var(--muted); font-size: .85rem; }
+.ticketgrid dd { margin: 0; font-weight: 600; }
+.ticketgrid .ref { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.15rem; letter-spacing: .06em; }
+
+footer { margin-top: 28px; text-align: center; }
+
+@media (max-width: 520px) {
+  .row label { flex: 1 1 100%; }
+  .seat { width: 40px; height: 34px; }
+}
