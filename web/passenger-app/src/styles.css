@@ -156,3 +156,30 @@ footer { margin-top: 28px; text-align: center; }
   .row label { flex: 1 1 100%; }
   .seat { width: 40px; height: 34px; }
 }
+
+/* ------------------------------------------------------------ admin view */
+.kpis { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.kpi {
+  flex: 1 1 180px; background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 4px;
+}
+.kpi.accent { border-color: var(--accent); }
+.kpi-value { font-size: 1.7rem; font-weight: 700; line-height: 1.1; }
+.kpi.accent .kpi-value { color: var(--accent); }
+.kpi-label { font-size: .85rem; font-weight: 600; }
+.kpi-note { font-size: .75rem; color: var(--muted); }
+
+.heatmap { display: flex; flex-direction: column; gap: 3px; margin: 12px 0; }
+.heat-row { display: grid; grid-template-columns: 92px 1fr 72px; gap: 10px; align-items: center; font-size: .8rem; }
+.heat-label { color: var(--muted); white-space: nowrap; }
+.heat-track { background: var(--surface-2); border-radius: 3px; height: 16px; overflow: hidden; }
+.heat-track i { display: block; height: 100%; border-radius: 3px; transition: width .2s; min-width: 2px; }
+.heat-value { text-align: right; font-variant-numeric: tabular-nums; }
+
+.datatable { width: 100%; border-collapse: collapse; font-size: .88rem; }
+.datatable th, .datatable td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+.datatable th { color: var(--muted); font-weight: 600; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+.datatable td:not(:first-child), .datatable th:not(:first-child) { text-align: right; font-variant-numeric: tabular-nums; }
+
+code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: .85em; }
+a { color: var(--accent); }

@@ -60,17 +60,21 @@ public class AdminReportingService {
             BigDecimal conventionalLoadFactorPct,
             BigDecimal segmentsPerSeat,
             long actualRevenueMinor,
-            Long counterfactualRevenueMinor,
+            /** Revenue if each seat had been sold once, to whoever booked it first. */
+            Long firstSaleRevenueMinor,
+            /** Extra revenue earned by second-and-subsequent sales of a seat, as a percentage. */
             BigDecimal resaleUpliftPct,
+            /** Separate fare-policy comparison; null unless a through fare was supplied. */
+            Long wholeJourneyCounterfactualMinor,
             List<HopOccupancy> occupancy,
             List<SegmentRevenue> revenueBySegment) {}
 
     /**
-     * @param wholeJourneyFareMinor the published through fare, used for the resale-uplift
-     *     counterfactual. Supplied by the caller rather than fetched from pricing-service on purpose:
-     *     pricing-service already depends on booking-service for trip topology, and calling back the
-     *     other way would close a dependency cycle for a reporting nicety. When absent, the uplift is
-     *     reported as null rather than guessed.
+     * @param wholeJourneyFareMinor optional published through fare. The resale uplift does NOT need
+     *     it -- that is computed from this trip's own recorded fares. It is used only for the separate
+     *     fare-policy comparison, and is supplied by the caller rather than fetched from
+     *     pricing-service on purpose: pricing already depends on booking for trip topology, and calling
+     *     back would close a dependency cycle for a reporting figure.
      */
     public TripReport tripReport(UUID tripId, Long wholeJourneyFareMinor) {
         var trip =
@@ -144,20 +148,49 @@ public class AdminReportingService {
                         : BigDecimal.valueOf(totalSegments)
                                 .divide(BigDecimal.valueOf(distinctSeatsUsed), 2, RoundingMode.HALF_UP);
 
-        Long counterfactual = null;
-        BigDecimal upliftPct = null;
-        if (wholeJourneyFareMinor != null && wholeJourneyFareMinor > 0) {
-            // Under whole-journey-only ticketing each occupied seat is sold exactly once, for the
-            // whole route, at the through fare. This is a MODEL, and it is labelled as one: presenting
-            // a modelled figure as measured fact would not survive contact with a finance department.
-            counterfactual = wholeJourneyFareMinor * distinctSeatsUsed;
-            if (counterfactual > 0) {
-                upliftPct =
-                        BigDecimal.valueOf(actualRevenue - counterfactual)
+        // ---------------------------------------------------------------- resale uplift
+        //
+        // The counterfactual is "each seat sold ONCE, to whoever booked it first" -- the defining
+        // constraint of whole-journey-only ticketing, where the first passenger commits the seat for
+        // the entire route and it cannot be resold.
+        //
+        // Deliberately NOT "each occupied seat sold at the full through fare". That was the first
+        // model here and it is wrong in a way that matters: it credits the old regime with selling a
+        // 292 km ticket to a passenger travelling 29 km to Gampaha, who under any regime would have
+        // gone unreserved rather than pay for the whole line. It inflated the baseline so far that the
+        // report showed resale LOSING 24% -- the exact opposite of the truth, on the one number the
+        // whole feature exists to produce.
+        //
+        // Summing each seat's earliest fare needs no assumption about historic pricing at all, and
+        // isolates the thing being measured: revenue from second-and-subsequent sales of a seat.
+        // Fare-policy change is a separate effect and is not conflated with it here.
+        long firstSaleRevenue =
+                longOf(
+                        """
+                        SELECT COALESCE(SUM(first_fare), 0) FROM (
+                            SELECT DISTINCT ON (bs.seat_id) bs.fare_minor AS first_fare
+                              FROM booking_segment bs
+                             WHERE bs.trip_id = :tripId AND bs.status IN ('HELD','CONFIRMED')
+                             ORDER BY bs.seat_id, bs.from_seq
+                        ) firsts
+                        """,
+                        params);
+
+        Long counterfactual = firstSaleRevenue > 0 ? firstSaleRevenue : null;
+        BigDecimal upliftPct =
+                firstSaleRevenue > 0
+                        ? BigDecimal.valueOf(actualRevenue - firstSaleRevenue)
                                 .multiply(BigDecimal.valueOf(100))
-                                .divide(BigDecimal.valueOf(counterfactual), 1, RoundingMode.HALF_UP);
-            }
-        }
+                                .divide(BigDecimal.valueOf(firstSaleRevenue), 1, RoundingMode.HALF_UP)
+                        : null;
+
+        // Retained for the separate question "what would this trip have grossed if every occupied seat
+        // had been sold whole-journey at the through fare?" -- a fare-policy comparison, not a resale
+        // one. Reported alongside rather than as the headline.
+        Long wholeJourneyCounterfactual =
+                wholeJourneyFareMinor != null && wholeJourneyFareMinor > 0
+                        ? wholeJourneyFareMinor * distinctSeatsUsed
+                        : null;
 
         return new TripReport(
                 tripId,
@@ -176,6 +209,7 @@ public class AdminReportingService {
                 actualRevenue,
                 counterfactual,
                 upliftPct,
+                wholeJourneyCounterfactual,
                 occupancyByHop(tripId, bookableSeats),
                 revenueBySegment(tripId));
     }
