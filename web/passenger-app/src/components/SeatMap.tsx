@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Coach, Seat } from '../api';
 
 /**
@@ -19,6 +19,21 @@ import type { Coach, Seat } from '../api';
  *
  * Colour is never the only channel: every seat carries an aria-label stating
  * everything the colour conveys, and the legend is text.
+ *
+ * **Keyboard.** The grid declares `role="grid"`, and that declaration is a
+ * promise: a screen-reader user who meets a grid expects arrow keys to move
+ * between cells and expects the whole grid to be a single tab stop. It used to
+ * declare the role without implementing either, which is worse than using no
+ * role at all -- 60 seats meant 60 tab stops, and arrow keys did nothing. It now
+ * uses a roving tabindex: one seat is tabbable, arrows move within the coach,
+ * Home/End jump along a row, Ctrl+Home/End to the first or last seat.
+ *
+ * Unavailable seats are `aria-disabled` rather than `disabled`, deliberately.
+ * A `disabled` button cannot be focused, so a keyboard user could not reach a
+ * taken seat to find out *why* it was unavailable -- and with segment inventory
+ * "why" is the interesting part, because an amber seat is free for some of the
+ * journey and its occupancy range is the thing worth reading. Activating one
+ * does nothing; it just can't be silently hidden from non-mouse users.
  */
 
 type Props = {
@@ -65,6 +80,82 @@ export function SeatMap({
     return map;
   }, [coach.seats]);
 
+  // ------------------------------------------------------- keyboard navigation
+
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  /** Every occupied grid position, in reading order. */
+  const positions = useMemo(
+    () =>
+      [...coach.seats]
+        .sort((a, b) => a.row - b.row || a.col - b.col)
+        .map((s) => `${s.row}:${s.col}`),
+    [coach.seats],
+  );
+
+  // Which seat currently carries tabindex=0. Starts on the selected seat if there
+  // is one, so returning to the map puts you back where you were rather than at 1A.
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const selectedKey = useMemo(() => {
+    const seat = coach.seats.find((s) => s.seatId === selectedSeatId);
+    return seat ? `${seat.row}:${seat.col}` : null;
+  }, [coach.seats, selectedSeatId]);
+
+  const active = activeKey ?? selectedKey ?? positions[0] ?? null;
+
+  // Move focus only when the grid already owns it. Without this guard the effect
+  // would steal focus from the page on first render and on every coach change.
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid || !activeKey || !grid.contains(document.activeElement)) return;
+    grid.querySelector<HTMLButtonElement>(`[data-key="${activeKey}"]`)?.focus();
+  }, [activeKey]);
+
+  function step(from: string, dRow: number, dCol: number): string | null {
+    let [row, col] = from.split(':').map(Number);
+    // Walk until the next occupied cell, so a door or luggage bay is skipped over
+    // rather than swallowing the keypress.
+    for (let i = 0; i < (layout ? layout.rows + layout.columns : 0); i++) {
+      row += dRow;
+      col += dCol;
+      if (row < 1 || col < 1 || (layout && (row > layout.rows || col > layout.columns))) return null;
+      const key = `${row}:${col}`;
+      if (byPosition.has(key)) return key;
+    }
+    return null;
+  }
+
+  function onKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (!active) return;
+
+    const rowOf = (key: string) => Number(key.split(':')[0]);
+    let next: string | null = null;
+
+    switch (event.key) {
+      case 'ArrowUp': next = step(active, -1, 0); break;
+      case 'ArrowDown': next = step(active, 1, 0); break;
+      case 'ArrowLeft': next = step(active, 0, -1); break;
+      case 'ArrowRight': next = step(active, 0, 1); break;
+      case 'Home':
+        next = event.ctrlKey
+          ? positions[0]
+          : positions.find((k) => rowOf(k) === rowOf(active)) ?? null;
+        break;
+      case 'End':
+        next = event.ctrlKey
+          ? positions[positions.length - 1]
+          : [...positions].reverse().find((k) => rowOf(k) === rowOf(active)) ?? null;
+        break;
+      default:
+        return;
+    }
+
+    // Swallow the key even at an edge, so Down on the back row does not scroll the
+    // page out from under someone who is still reading the coach.
+    event.preventDefault();
+    if (next) setActiveKey(next);
+  }
+
   if (!layout) {
     return (
       <p className="muted">
@@ -89,7 +180,9 @@ export function SeatMap({
       <div
         className="seatmap-grid"
         role="grid"
-        aria-label={`Seat map for coach ${coach.coachNumber}`}
+        ref={gridRef}
+        onKeyDown={onKeyDown}
+        aria-label={`Seat map for coach ${coach.coachNumber}. Use the arrow keys to move between seats.`}
         style={{ ['--cols' as string]: layout.columns }}
       >
         {Array.from({ length: layout.rows }, (_, r) => {
@@ -116,7 +209,11 @@ export function SeatMap({
                     <button
                       type="button"
                       className={`seat s-${state}`}
-                      disabled={!selectable}
+                      data-key={`${row}:${col}`}
+                      // Roving tabindex: the grid is one tab stop, arrows move inside it.
+                      tabIndex={`${row}:${col}` === active ? 0 : -1}
+                      aria-disabled={!selectable}
+                      onFocus={() => setActiveKey(`${row}:${col}`)}
                       onClick={() => selectable && onSelect(seat)}
                       title={describe(seat, state, stops)}
                       aria-label={

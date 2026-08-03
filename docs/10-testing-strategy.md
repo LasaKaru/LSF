@@ -154,15 +154,22 @@ chains of adjacent legs, single-stop hops at the extremes of the route.
 
 ### 4.4 Chaos / interleaving
 
-| Test | Scenario |
-|---|---|
-| `HoldExpiryRaceIT` | The sweeper expires a hold at the same instant a booking tries to take that seat |
-| `ConfirmCancelRaceIT` | Confirm and cancel arrive simultaneously for one booking |
-| `IdempotencyRaceIT` | Two identical POSTs with the same key at the same instant ⇒ one booking, two identical responses |
-| `MultiSeatDeadlockIT` | Two transactions booking the same 4 seats in opposite orders ⇒ no deadlock (sorted acquisition), or clean retry |
-| `OutboxDuplicateIT` | The same event delivered twice ⇒ consumer is idempotent, no double waitlist promotion |
+This table used to name five test classes as though all five existed. Three did not. It now states what
+is in the repository and what is still only planned, with the class that actually covers each scenario —
+because a reviewer who greps for a named test and finds nothing has no reason to believe the rest of this
+document either.
 
-`MultiSeatDeadlockIT` exists because the load test found that bug. It is now regression-protected.
+| Scenario | Status | Where it actually lives |
+|---|---|---|
+| Two identical POSTs with the same key at the same instant ⇒ one booking, two identical responses | ✅ built | `ConcurrentBookingIT` — *"concurrent duplicate submits with one key produce one booking"* and *"the same Idempotency-Key replays instead of booking twice"* |
+| The same event delivered twice ⇒ consumer is idempotent, no double waitlist promotion | ✅ built | `WaitlistIT` — *"redelivery of the same event does not promote twice"* |
+| Two transactions booking the same 4 seats in opposite orders ⇒ no deadlock (sorted acquisition) | ✅ built | `MultiSeatDeadlockIT` — asserts on `pg_stat_database.deadlocks`; measured 0 sorted vs 47 unsorted |
+| The sweeper expires a hold at the same instant a booking tries to take that seat | ❌ not built | The *mechanism* is covered — `SegmentExclusionConstraintIT` proves expired segments hold no inventory, and expiry happens inside the booking transaction — but the simultaneous-instant race has no dedicated test |
+| Confirm and cancel arrive simultaneously for one booking | ❌ not built | Guarded in code by the state machine plus a compare-and-set on status, so a loser gets `BOOKING_NOT_HELD`. Unproven under actual concurrency |
+
+The two unbuilt rows are the honest gaps in the concurrency suite. Neither can violate INV-1 — the
+exclusion constraint is what protects the seat, and it does not care which of these races is running —
+so they are correctness risks for a *booking's own state*, not for double-selling.
 
 ---
 
@@ -193,7 +200,12 @@ chains of adjacent legs, single-stop hops at the extremes of the route.
 
 ---
 
-## 7. Load and performance (k6)
+## 7. Load and performance (k6) — DESIGNED, NOT BUILT
+
+> **Status: not written and never run.** k6 is not available in the build environment, and `load/`
+> contains no script. The scenario below is a specification for the load test this system should have,
+> not a report of one that exists. Any figure attributed to it elsewhere in these documents is an error —
+> `docs/14 §4` carried exactly such a figure and has been corrected. Treat the numbers here as targets.
 
 `load/booking-contention.js` — deliberately adversarial:
 

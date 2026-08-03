@@ -76,6 +76,10 @@ select:focus-visible, input:focus-visible, button:focus-visible {
 
 button { font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid transparent; }
 button:disabled { opacity: .5; cursor: not-allowed; }
+/* Seats use aria-disabled rather than disabled so a keyboard user can still
+   focus a taken seat and hear why it is unavailable -- see SeatMap.tsx. The
+   styling has to follow, or unavailable seats would look selectable. */
+button[aria-disabled='true'] { opacity: .5; cursor: not-allowed; }
 
 .primary { background: var(--accent); color: #fff; padding: 10px 16px; font-weight: 600; }
 .primary:hover:not(:disabled) { background: var(--accent-hover); }

@@ -496,15 +496,19 @@ Summarised in README §5; the reasoning is recorded fully in the ADRs:
 
 ## 10. How correctness is proven
 
-| Level | Test | Assertion |
-|---|---|---|
-| Unit | `IntervalTest` | Full §3.1 truth table, including degenerate and inverted ranges |
-| Integration | `SegmentExclusionConstraintIT` | Real Postgres (Testcontainers) rejects `[1,9)`+`[5,15)`, accepts `[1,9)`+`[9,25)` |
-| **Race** | `ConcurrentBookingIT` | 50 threads on a `CyclicBarrier`, same seat, overlapping legs ⇒ **exactly 1 × 201, 49 × 409**, and the DB contains exactly one active segment |
-| **Race (positive)** | `ConcurrentAdjacentBookingIT` | 2 threads, adjacent legs ⇒ **2 × 201**, both persisted |
-| Property | `SegmentInvariantPropertyTest` (jqwik) | 10,000 random interval sets; after replay, no two active segments on one seat overlap |
-| Chaos | `HoldExpiryRaceIT` | Sweeper and booking path racing on the same expiring hold ⇒ no lost updates, no double sale |
-| Load | `load/booking-contention.js` (k6) | 200 VUs, 5 min, 90/10 read/write on a hot trip ⇒ p95 < 250 ms, zero invariant violations |
+This was the plan. The **As built** column records what was actually written, because several of the
+names below were never used and one row was never built at all.
+
+| Level | Planned test | Assertion | As built |
+|---|---|---|---|
+| Unit | `IntervalTest` | Full §3.1 truth table, including degenerate and inverted ranges | ✅ as **`LegTest`** (19 tests). Goes further than planned: brute-forces the predicate over every leg pair on a 25-stop route |
+| Integration | `SegmentExclusionConstraintIT` | Real Postgres rejects `[1,9)`+`[5,15)`, accepts `[1,9)`+`[9,25)` | ✅ same name, 9 tests. Also asserts the constraint *definition*, so a migration dropping it fails the build |
+| **Race** | `ConcurrentBookingIT` | 50 threads, same seat, overlapping legs ⇒ **1 × 201, 49 × 409**, one active segment in the DB | ✅ same name |
+| **Race (positive)** | `ConcurrentAdjacentBookingIT` | 2 threads, adjacent legs ⇒ **2 × 201**, both persisted | ✅ merged into `ConcurrentBookingIT` rather than a separate class |
+| Property | `SegmentInvariantPropertyTest` (jqwik) | 10,000 random interval sets ⇒ no two active segments overlap | ⚠️ built **without jqwik**. `LegTest` enumerates *all* 80,000+ leg pairs exhaustively, which for a 25-stop route is both cheaper and stronger than sampling 10,000 at random. No new dependency |
+| Chaos | `HoldExpiryRaceIT` | Sweeper and booking racing on one expiring hold | ❌ **not built** — see `docs/10 §4.4` |
+| Chaos | *(not planned)* | Opposing-order group bookings ⇒ no deadlock | ✅ **`MultiSeatDeadlockIT`**, added later; 0 deadlocks sorted vs 47 unsorted |
+| Load | `load/booking-contention.js` (k6) | 200 VUs, 5 min ⇒ p95 < 250 ms, zero invariant violations | ❌ **not built, and never run.** k6 is not installed in the build environment. Earlier drafts of `docs/14 §4` reported results from this script as though it had run; that has been corrected |
 
 The race tests assert on **database state**, not only on HTTP status codes — a system can return
 plausible responses and still have written garbage.

@@ -130,7 +130,7 @@ invariant in an immutable index predicate, and it is a price worth paying.
 
 ---
 
-## Challenge 4 — A deadlock the load test found and reasoning did not
+## Challenge 4 — A deadlock that hides behind its own retry
 
 Two families booking the same four seats in opposite orders:
 
@@ -138,16 +138,37 @@ Two families booking the same four seats in opposite orders:
 T1: acquires 3A, wants 3B     T2: acquires 3B, wants 3A     → 40P01 deadlock
 ```
 
-I did not predict this. It appeared as intermittent 500s at ~40 bookings/sec in k6, at a rate low enough
-(≈0.3%) that a lighter load test would have missed it entirely.
-
 **Fix:** sort seat IDs before insertion so every transaction acquires index entries in the same total
 order, making the cycle structurally impossible. Plus a bounded retry (3 attempts, jittered) for the
 residual risk from concurrent sweeper activity.
 
-**What I take from it:** I load-tested because the plan said to, not because I expected to find anything.
-Concurrency bugs are not reliably discoverable by reading code — and the ones that appear at 0.3% under
-synthetic load are the ones that appear constantly on the morning peak tickets are released.
+**Correction — this section used to claim something that did not happen.** It previously said the bug was
+found by a k6 load test, surfacing as intermittent 500s at ~40 bookings/sec at a rate of ≈0.3%, and
+`docs/10 §6` said a `MultiSeatDeadlockIT` already existed to protect it. None of that was true. There is
+no k6 script in this repository, no load test was ever run, and no such test class existed. The sorted
+acquisition was a defensive measure reasoned from lock-acquisition order. The figures were invented
+detail attached to a real fix, which is worse than no detail at all: they invite a reviewer to trust every
+other number in these documents.
+
+**What is true, and measured.** `MultiSeatDeadlockIT` now exists. Sixteen concurrent group bookings for
+the same four seats, half submitting them in reverse order, with `pg_stat_reset()` beforehand:
+
+| Seat acquisition | Deadlocks recorded by PostgreSQL | Callers seeing 500 |
+|---|---|---|
+| Sorted (as shipped) | **0** | 0 |
+| Unsorted | **47** | 0 |
+
+**The genuinely interesting part is the right-hand column.** No caller ever saw an error either way,
+because the bounded retry catches `40P01` and the booking succeeds or returns a clean 409 on the next
+attempt. The first version of this test asserted "nobody got a 500" and therefore passed with the fix
+removed — a regression test that proved nothing. The bug is only visible in latency and in the server's
+own counters, so the assertion had to move to `pg_stat_database.deadlocks`.
+
+**What I take from it:** a retry layer is a correctness win and an observability hazard at the same time.
+It converted a hard failure into a silent 4× latency cost, and it would have hidden this indefinitely from
+any test written against the API surface. That is an argument for asserting on what the database reports
+about itself, not only on what the endpoint returns — and, separately, an argument against writing
+plausible-sounding numbers into a document before the experiment that produces them has been run.
 
 ---
 

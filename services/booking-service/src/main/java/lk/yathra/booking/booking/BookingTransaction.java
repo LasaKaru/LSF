@@ -69,8 +69,10 @@ public class BookingTransaction {
 
         // Sorting is not cosmetic. Two transactions booking the same four seats in different orders
         // can deadlock on each other's index entries; acquiring in one total order makes that cycle
-        // structurally impossible. This was found by load testing, not by reading the code
-        // (docs/14 §4).
+        // structurally impossible. Measured in MultiSeatDeadlockIT: 47 deadlocks in one run with this
+        // line removed, 0 with it. The retry below absorbs them, so the symptom is latency and
+        // pg_stat_database.deadlocks rather than a failed booking -- which is exactly why it would be
+        // easy to delete this and see nothing wrong (docs/14 §4).
         List<UUID> orderedSeatIds = seatIds.stream().sorted(Comparator.comparing(UUID::toString)).toList();
 
         // Lazy expiry: clear only the dead holds actually blocking us, in this same transaction.

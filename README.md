@@ -20,7 +20,7 @@
 6. [Fares](#6-fares)
 7. [Proving correctness](#7-proving-correctness)
 8. [Configuration — nothing is hardcoded](#8-configuration--nothing-is-hardcoded)
-9. [Challenges, and four things the docs got wrong](#9-challenges-and-four-things-the-docs-got-wrong)
+9. [Challenges, and five things the docs got wrong](#9-challenges-and-five-things-the-docs-got-wrong)
 10. [Extra credit](#10-extra-credit)
 11. [What is and is not built](#11-what-is-and-is-not-built)
 12. [Documentation index](#12-documentation-index)
@@ -266,6 +266,35 @@ turns disjoint bookings into livelock. The conflict domain must be the *interval
 **Timestamp-based occupancy** (*"the seat is busy 06:15–09:40"*). The most common first instinct and the
 most quietly broken — see §3.1.
 
+**An ORM for the write path.** JPA was the default choice and the plan assumed it. Rejected because the
+entire booking write path is one carefully shaped `INSERT` whose *failure mode* is the design: it must
+reach PostgreSQL as written, fail with `23P01`, and carry back enough detail to build a recoverable 409.
+An ORM puts generated SQL and flush-timing between me and that, for a mapping problem I do not have —
+there are perhaps eight tables and no object graph worth managing. `NamedParameterJdbcTemplate` keeps the
+SQL legible in the file where it matters. The cost is real and worth naming: no dirty-checking, no lazy
+loading, and every column mapped by hand. Recorded as **ADR-002**.
+
+**A separate `waitlist-service`.** The design documents put the waitlist in its own deployable, and it
+consumes events, so the seam is genuine. Rejected because the matcher's promotion *is* a real `HELD`
+booking: it must go through the same exclusion constraint as every other booking, or the waitlist becomes
+a way to double-sell a seat. Splitting it puts a network call between that insert and the constraint that
+makes it safe — buying a process boundary at the cost of the guarantee. It consumes `SegmentReleased`
+through the outbox exactly as a remote consumer would, so the split remains available later as a
+deployment change.
+
+**A greedy, utilisation-maximising waitlist matcher.** When a stretch frees up, scan the queue for the
+entry that best *fills* it rather than the oldest that fits — strictly better seat-km, which is the metric
+this whole project is arguing for. Rejected anyway. A passenger who watches three later arrivals promoted
+ahead of them has been treated unfairly by any ordinary standard, and *"our optimiser preferred their
+journey shape"* is not an answer a state operator can give. This is a values decision wearing an
+algorithm's clothing, so it is stated rather than buried; the utilisation left on the table is the price.
+
+**`disabled` on unavailable seats.** The obvious way to stop someone booking a taken seat, and it was the
+original implementation. Rejected once the seat map claimed `role="grid"`: a `disabled` button cannot be
+focused, so keyboard and screen-reader users could not reach a taken seat *at all* — and with segment
+inventory the interesting information is precisely *why* it is unavailable, since an amber seat is free
+for part of your journey. Now `aria-disabled`, focusable, announcing its occupancy range.
+
 ---
 
 ## 5. Architecture
@@ -363,10 +392,19 @@ nice-to-have.
 | **Unit** (`LegTest`) | The full overlap truth table, plus an exhaustive brute-force cross-check of the arithmetic predicate against set intersection over **all 80,000+ leg pairs** on the 25-stop route | 19 pass |
 | **Integration** (`SegmentExclusionConstraintIT`) | Real PostgreSQL, real migrations: adjacency accepted, overlap rejected `23P01`, cancelled segments release, status propagation, constraint *definition* asserted so a future migration that drops it fails the build | 9 pass |
 | **Race** (`ConcurrentBookingIT`) | 50 threads on a `CyclicBarrier` → exactly 1 × 201, 49 × 409; 2 threads on adjacent legs → 2 × 201; idempotent replay; concurrent duplicate submits | 7 pass |
+| **Race** (`MultiSeatDeadlockIT`) | 16 concurrent group bookings for the same four seats, half submitting them in reverse order → no lock cycle. Asserts on `pg_stat_database.deadlocks`, **not** on status codes, because the retry hides this bug from the API entirely: 0 deadlocks with sorted acquisition, 47 without, and no caller sees an error either way (§9.9) | 1 pass |
+| **Race** (`WaitlistIT`) | Promotion on release, FIFO order, containment vs seatability, a lapsed offer keeping its queue position, at-least-once redelivery not promoting twice | 7 pass |
+| **API** (`ApiErrorMappingIT`) | An unmatched URL is 404 and a wrong verb is 405 — neither is a 500 with a stack trace (§9.5) | 2 pass |
 | **Fare** (`FareCalculatorTest`) | Published worked example reproduced exactly, band boundaries, subadditivity and monotonicity over ~42,000 split points | 16 pass |
 
-Every race test asserts on **database state** as well as HTTP status codes, because a system can return an
-entirely plausible set of responses and still have written garbage.
+**61 tests, green in CI.** Every race test asserts on **database state** as well as HTTP status codes,
+because a system can return an entirely plausible set of responses and still have written garbage — and
+in the deadlock case the status codes are actively misleading.
+
+Two gaps in the concurrency suite, stated rather than left to be discovered: there is no dedicated test
+for the sweeper expiring a hold at the exact instant a booking takes that seat, nor for confirm and
+cancel arriving simultaneously (`docs/10 §4.4`). Neither can violate INV-1 — the exclusion constraint
+protects the seat regardless — so they are risks to a booking's own state, not to double-selling.
 
 The suite runs against a real PostgreSQL 16 — **never H2**. The whole correctness argument rests on a GiST
 exclusion constraint that only PostgreSQL has; testing against H2 would exercise a different system and
@@ -400,10 +438,12 @@ no literal credential, and gitleaks runs in CI over the **full history**, not ju
 
 ---
 
-## 9. Challenges, and four things the docs got wrong
+## 9. Challenges, and five things the docs got wrong
 
-The design documents in `docs/` were written before the code. Building it proved four of their claims
-wrong. I have kept the original documents and corrected them here rather than quietly editing history.
+The design documents in `docs/` were written before the code. Building it proved five of their claims
+wrong — four technical, and one about the documents themselves: they described tests and measurements
+that had never been run (§9.8). I have kept the original documents and corrected them in place, marking
+what was planned against what was built, rather than quietly editing history.
 
 ### 9.1 `FARE-1` is false under rounding
 
@@ -495,6 +535,75 @@ backlog cannot become one giant transaction), *plus* **surgical in-transaction e
 conflicting holds on the booking path — race-free because the expiry and the insert share a transaction.
 Worst case is a seat looking taken for a few seconds after a hold dies. It self-heals, and it errs toward
 "looks taken" rather than "looks free", which is the safe direction.
+
+### 9.8 Documents that described work which had not happened
+
+The one I would most want a reviewer to know I found myself.
+
+`docs/14 §4` narrated a deadlock discovered by a k6 load test — *"intermittent 500s at ~40 bookings/sec,
+at a rate low enough (≈0.3%) that a lighter load test would have missed it"*. `docs/10 §6` listed
+`MultiSeatDeadlockIT` and stated it *"exists because the load test found that bug. It is now
+regression-protected."* `docs/04` tabulated seven test classes as though all seven were written.
+
+None of it was true. There is no k6 script in this repository, no load test was ever run, `MultiSeatDeadlockIT`
+did not exist, and three of those seven class names were never used. The design documents were written
+before the implementation and describe intent in the past tense; the fix in the code was real, but the
+*provenance* and the *figures* were invented.
+
+This is worse than an ordinary documentation drift, because the fabricated detail is the persuasive part.
+A reviewer who greps for `MultiSeatDeadlockIT`, finds nothing, and then rereads the 2.37 s constraint
+measurement in §3.2 has no way to tell which numbers in this repository were measured and which were
+imagined. One unbacked claim devalues every honest one.
+
+**What I did about it.** Wrote the test for real, corrected `docs/04`, `docs/10` and `docs/14` to
+distinguish built from planned, and marked the k6 scenario explicitly as a specification rather than a
+result. `docs/04`'s test table now carries an **As built** column, because the useful thing about a plan
+is where it diverged.
+
+### 9.9 A retry layer that hid the bug it was catching
+
+Writing that test properly turned out to be the interesting part. The obvious assertion — *"no caller saw
+a 500"* — **passed with the fix removed.** The bounded retry catches `40P01` and the next attempt
+succeeds, so every caller gets a clean 201 or 409 either way. A regression test that passes without the
+code it guards is worth nothing.
+
+The bug is real, though. Asking PostgreSQL directly, with `pg_stat_reset()` first:
+
+| Seat acquisition | Deadlocks | Callers seeing 500 | Wall clock |
+|---|---|---|---|
+| Sorted (as shipped) | **0** | 0 | ~12 s |
+| Unsorted | **47** | 0 | ~51 s |
+
+So the assertion moved to `pg_stat_database.deadlocks`. **A retry is a correctness win and an
+observability hazard at once** — it converted a hard failure into a silent 4× latency cost that no
+test written against the API surface could see. Worth keeping; worth knowing about.
+
+One more honesty note, in the test's own comments: detection is reliable in only one direction. With the
+fix present the lock cycle cannot form, so the test never fails spuriously. With the fix absent, whether a
+cycle *forms* depends on interleaving — one observed run of the unsorted code produced zero deadlocks and
+passed. It catches a regression usually, not certainly, and says so.
+
+### 9.10 The test harness fighting itself, twice
+
+Both of these cost real time and both looked like product bugs.
+
+**ShedLock's in-JVM lock registry.** Integration tests call `relay.drain()` directly, so ShedLock
+intercepts them exactly as it would a scheduled firing — and a lock it declines to grant makes the call a
+silent no-op, no exception, no log line. I "fixed" that by truncating the `shedlock` table between tests,
+which made it permanently worse: `AbstractStorageBasedLockProvider` keeps an in-memory set of lock names
+it has already inserted and thereafter issues only `UPDATE`s, so truncating behind its back leaves every
+future acquisition matching zero rows. The symptom reads as *"the waitlist matcher does not match"*.
+
+**Background timers versus `TRUNCATE`.** Removing ShedLock from the tests then exposed something it had
+been accidentally suppressing: the waitlist offer sweeper deadlocking against a test's `TRUNCATE` in CI —
+the sweeper takes `AccessShare` on `booking` through its subquery, `TRUNCATE` wants `AccessExclusive`.
+`@EnableScheduling` was an annotation on the application class, so *every* test context started the
+timers, and a `fixedDelay` task fires immediately at startup regardless of its interval — which is why
+pushing the intervals out to an hour had done nothing. It now sits behind `yathra.scheduling.enabled`,
+default on, off in tests.
+
+The lesson both times: **when a test fails, ask what the harness is doing before assuming the product is
+wrong.** I twice concluded the feature was broken when the feature was fine.
 
 ---
 
@@ -588,7 +697,7 @@ deployment.
 Stated plainly so nothing reads as a claim it is not.
 
 **Built and verified end to end:** the segment invariant and its proof; leg-scoped availability; seat map
-with occupancy ranges; hold → confirm with TTL, sweeper and in-transaction expiry; idempotency; the
+with occupancy ranges and full keyboard navigation; hold → confirm with TTL, sweeper and in-transaction expiry; idempotency; the
 telescopic fare engine with signed quotes; trip publication with snapshotting; the passenger web app;
 admin reporting endpoints; the segment waitlist with event-driven promotion; nginx gateway;
 docker-compose; CI.
