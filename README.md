@@ -773,6 +773,7 @@ production.
 | [`docs/16-demo-and-walkthrough.md`](docs/16-demo-and-walkthrough.md) | Demo script, expected questions, live-extension rehearsals |
 | [`docs/17-configuration.md`](docs/17-configuration.md) | Every environment variable and config surface |
 | [`docs/18-glossary.md`](docs/18-glossary.md) | Ubiquitous language |
+| [`docs/20-deployment-render.md`](docs/20-deployment-render.md) | **Deploying free on Render** — why not Netlify/Vercel, the one-click Blueprint, free-tier limits, and the single manual step |
 | [`docs/19-walkthrough-evidence.md`](docs/19-walkthrough-evidence.md) | **Screenshots of every screen and scenario**, with the backend log lines each produced — and the two bugs capturing them exposed |
 | [`PROJECT_PLAN.md`](PROJECT_PLAN.md) · [`SPRINT_PLAN.md`](SPRINT_PLAN.md) | Delivery plan, risk register, execution timeline |
 
