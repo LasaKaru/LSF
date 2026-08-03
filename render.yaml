@@ -1,0 +1,143 @@
+# =============================================================================
+# Render Blueprint — one-click deploy of the whole stack on the free tier.
+#
+#   Render dashboard → New → Blueprint → pick this repository.
+#
+# Four services and a database:
+#   yathra-db        free PostgreSQL 16
+#   yathra-booking   owns the invariant  (schema: booking)
+#   yathra-catalog   stations and trips  (schema: catalog)
+#   yathra-pricing   fares and quotes    (schema: pricing)
+#   yathra-web       the SPA, as a static site that proxies /api to the above
+#
+# Read docs/20-deployment-render.md before deploying — there is one manual step
+# (creating the btree_gist extension) that a Blueprint cannot do for you, and
+# several free-tier limits worth knowing in advance.
+# =============================================================================
+
+databases:
+  - name: yathra-db
+    databaseName: yathra
+    user: yathra
+    plan: free
+    postgresMajorVersion: "16"
+
+services:
+  # --------------------------------------------------------------- booking ★
+  # Owns INV-1. Deploy this first: catalog publishes trips into it on startup.
+  - type: web
+    name: yathra-booking
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./deploy/render/Dockerfile
+    dockerContext: .
+    healthCheckPath: /actuator/health/readiness
+    envVars:
+      - key: SERVICE
+        value: booking-service
+      - key: DB_SCHEMA
+        value: booking
+      - key: DATABASE_URL
+        fromDatabase:
+          name: yathra-db
+          property: connectionString
+      # Signs and verifies fare quotes. Shared with pricing-service, which is
+      # why it is generated once here and referenced there rather than twice.
+      - key: QUOTE_SIGNING_KEY
+        generateValue: true
+      - key: BOOKING_HOLD_TTL_SECONDS
+        value: "600"
+      - key: HOLD_SWEEP_INTERVAL_SECONDS
+        value: "15"
+
+  # --------------------------------------------------------------- pricing
+  - type: web
+    name: yathra-pricing
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./deploy/render/Dockerfile
+    dockerContext: .
+    healthCheckPath: /actuator/health/readiness
+    envVars:
+      - key: SERVICE
+        value: pricing-service
+      - key: DB_SCHEMA
+        value: pricing
+      - key: DATABASE_URL
+        fromDatabase:
+          name: yathra-db
+          property: connectionString
+      # MUST match booking's key, or every quote fails signature verification.
+      - key: QUOTE_SIGNING_KEY
+        fromService:
+          name: yathra-booking
+          type: web
+          envVarKey: QUOTE_SIGNING_KEY
+
+  # --------------------------------------------------------------- catalog
+  - type: web
+    name: yathra-catalog
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./deploy/render/Dockerfile
+    dockerContext: .
+    healthCheckPath: /actuator/health/readiness
+    envVars:
+      - key: SERVICE
+        value: catalog-service
+      - key: DB_SCHEMA
+        value: catalog
+      - key: DATABASE_URL
+        fromDatabase:
+          name: yathra-db
+          property: connectionString
+      # Internal hostname, so trip publication never leaves Render's network.
+      - key: BOOKING_SERVICE_URL
+        fromService:
+          name: yathra-booking
+          type: web
+          property: hostport
+      - key: BOOKING_HORIZON_DAYS
+        value: "30"
+
+  # ------------------------------------------------------------------- web
+  # A static site rather than the nginx gateway: Render serves static content
+  # free and always-on, and its rewrite rules give the same single origin the
+  # gateway provides locally — so there is still no CORS anywhere.
+  - type: web
+    name: yathra-web
+    runtime: static
+    buildCommand: cd web/passenger-app && npm ci && npm run build
+    staticPublishPath: ./web/passenger-app/dist
+    pullRequestPreviewsEnabled: false
+    routes:
+      # Order matters: first match wins, so the two catalog paths and the two
+      # pricing paths must precede the catch-all that sends everything else to
+      # booking. Getting this order wrong sends /api/v1/quotes to booking,
+      # which 404s and looks like a pricing outage.
+      - type: rewrite
+        source: /api/v1/stations/*
+        destination: https://yathra-catalog.onrender.com/api/v1/stations/*
+      - type: rewrite
+        source: /api/v1/routes/*
+        destination: https://yathra-catalog.onrender.com/api/v1/routes/*
+      - type: rewrite
+        source: /api/v1/quotes/*
+        destination: https://yathra-pricing.onrender.com/api/v1/quotes/*
+      - type: rewrite
+        source: /api/v1/fare-rules/*
+        destination: https://yathra-pricing.onrender.com/api/v1/fare-rules/*
+      # Service-to-service only — must never be reachable from a browser.
+      - type: redirect
+        source: /api/v1/internal/*
+        destination: /
+      - type: rewrite
+        source: /api/*
+        destination: https://yathra-booking.onrender.com/api/*
+      # SPA history fallback, last so it cannot swallow the API routes above.
+      - type: rewrite
+        source: /*
+        destination: /index.html
