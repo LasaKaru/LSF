@@ -583,7 +583,36 @@ fix present the lock cycle cannot form, so the test never fails spuriously. With
 cycle *forms* depends on interleaving — one observed run of the unsorted code produced zero deadlocks and
 passed. It catches a regression usually, not certainly, and says so.
 
-### 9.10 The test harness fighting itself, twice
+### 9.10 Virtual threads plus a TLS database: requests that hang forever
+
+Found while capturing walkthrough screenshots, not by any test. The most serious defect in this project,
+and it would have appeared **in production and nowhere else**.
+
+A second booking for an already-held seat never returned — not slow, indefinitely hung. `pg_stat_activity`
+showed zero active backends, and `jstack` showed no application frames at all. That absence was the clue:
+all three services set `spring.threads.virtual.enabled=true`, and a standard thread dump does not show
+virtual threads. `jcmd Thread.dump_to_file -format=json` showed six handler threads parked inside
+`BookingTransaction.createHold`, blocked in `PGStream.receiveString` on an **SSL-wrapped** socket.
+
+On Java 21 a virtual thread blocking inside a `synchronized` block **pins its carrier**. `SSLSocketImpl`
+reads inside synchronized methods, and pgjdbc's default `sslmode=prefer` negotiates TLS whenever the
+server offers it. The carrier pool is sized to CPU count — four here — so a few concurrent queries starved
+the scheduler and every later request hung.
+
+| `spring.threads.virtual.enabled` | Same request, same seat |
+|---|---|
+| `true`, against a TLS PostgreSQL | **hangs indefinitely** |
+| `false` | **409 in 0.07 s** |
+
+**CI could not have caught this.** `postgres:16-alpine` ships with `ssl=off`, so in Compose and in CI the
+connection is plaintext and nothing pins. My local PostgreSQL has `ssl=on` — as does every managed
+Postgres a real deployment would use. Green CI was actively misleading here.
+
+Virtual threads are now off by default (`THREADS_VIRTUAL_ENABLED` to re-enable), with the reasoning
+beside the setting. These services are synchronous and DB-bound, so they bought little anyway; Java 24's
+JEP 491 removes the pinning.
+
+### 9.11 The test harness fighting itself, twice
 
 Both of these cost real time and both looked like product bugs.
 
@@ -744,6 +773,7 @@ production.
 | [`docs/16-demo-and-walkthrough.md`](docs/16-demo-and-walkthrough.md) | Demo script, expected questions, live-extension rehearsals |
 | [`docs/17-configuration.md`](docs/17-configuration.md) | Every environment variable and config surface |
 | [`docs/18-glossary.md`](docs/18-glossary.md) | Ubiquitous language |
+| [`docs/19-walkthrough-evidence.md`](docs/19-walkthrough-evidence.md) | **Screenshots of every screen and scenario**, with the backend log lines each produced — and the two bugs capturing them exposed |
 | [`PROJECT_PLAN.md`](PROJECT_PLAN.md) · [`SPRINT_PLAN.md`](SPRINT_PLAN.md) | Delivery plan, risk register, execution timeline |
 
 ### Where to start reading the code

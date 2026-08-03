@@ -21,29 +21,43 @@ that is guaranteed rather than hoped for.
 
 ### Must have (submission fails without these)
 
-| # | Item | Verification |
-|---|---|---|
-| M1 | Segment-based inventory model | `SegmentExclusionConstraintIT` |
-| M2 | Adjacent legs on one seat both succeed | `ConcurrentAdjacentBookingIT` |
-| M3 | Overlapping legs on one seat rejected under concurrency | `ConcurrentBookingIT` |
-| M4 | Distance-proportional fares | `FareBandTest`, additivity property test |
-| M5 | REST API: stations, trips, availability, bookings | OpenAPI + integration tests |
-| M6 | Frontend: origin/destination → leg-specific availability → book | Playwright happy path |
-| M7 | Configurable coaches, seats, stations | Seed + a "add a coach with SQL only" check |
-| M8 | `docker compose up` from a clean machine | CI job on a fresh runner |
-| M9 | No committed secrets | `gitleaks` over full history, blocking |
-| M10 | README: decisions, alternatives, challenges, extras | Self-review against the brief, line by line |
-| M11 | Legible commit history | `git log --oneline --graph` review |
+| # | Item | Verification | Status |
+|---|---|---|---|
+| M1 | Segment-based inventory model | `SegmentExclusionConstraintIT` | ✅ 9 tests |
+| M2 | Adjacent legs on one seat both succeed | `ConcurrentAdjacentBookingIT` | ✅ — merged into `ConcurrentBookingIT` rather than a separate class |
+| M3 | Overlapping legs on one seat rejected under concurrency | `ConcurrentBookingIT` | ✅ 50 threads → exactly 1 × 201 |
+| M4 | Distance-proportional fares | `FareBandTest`, additivity property test | ✅ as **`FareCalculatorTest`**, 16 tests. The additivity test is what disproved `FARE-1` |
+| M5 | REST API: stations, trips, availability, bookings | OpenAPI + integration tests | ✅ |
+| M6 | Frontend: origin/destination → leg-specific availability → book | Playwright happy path | ⚠️ **built and verified, but not by a committed Playwright suite.** The whole flow was driven through Chromium manually (search → seat map → hold → confirm → ticket, and the waitlist journey end to end). An automated E2E suite remains future work |
+| M7 | Configurable coaches, seats, stations | Seed + a "add a coach with SQL only" check | ✅ layouts are `coach_layout` JSON; the seat map is a pure function of it |
+| M8 | `docker compose up` from a clean machine | CI job on a fresh runner | ✅ **green in CI — and only ever there.** No Docker daemon in the dev environment |
+| M9 | No committed secrets | `gitleaks` over full history, blocking | ✅ green, blocking |
+| M10 | README: decisions, alternatives, challenges, extras | Self-review against the brief, line by line | ✅ §3, §4, §9, §10 |
+| M11 | Legible commit history | `git log --oneline --graph` review | ✅ Conventional Commits, no squashing |
+
+**All 11 Must-haves met.**
 
 ### Should have
 
-S1 seat map · S2 admin occupancy/revenue · S3 409 conflict UX with one-click recovery ·
-S4 hold-then-confirm with TTL · S5 idempotency · S6 ADRs · S7 load test
+| # | Item | Status |
+|---|---|---|
+| S1 | Seat map | ✅ tri-state, layout-driven, keyboard-navigable |
+| S2 | Admin occupancy/revenue | ✅ full dashboard: seat-km utilisation, heatmap, revenue, resale uplift |
+| S3 | 409 conflict UX with one-click recovery | ✅ |
+| S4 | Hold-then-confirm with TTL | ✅ sweeper + in-transaction expiry |
+| S5 | Idempotency | ✅ key + body hash, same transaction |
+| S6 | ADRs | ⚠️ all ten written — but batched at the end, not as decisions were made. See `SPRINT_PLAN` Day 1 |
+| S7 | Load test | ❌ **not done.** k6 unavailable. Worse, it was reported as done in `docs/14 §4`; corrected, and the deadlock it claimed to have found is now covered by `MultiSeatDeadlockIT` |
 
 ### Could have
 
-C1 waitlist · C2 SSE live availability · C3 telescopic + scenic + demand fares · C4 trilingual UI ·
-C5 observability profile
+| # | Item | Status |
+|---|---|---|
+| C1 | Waitlist | ✅ **built** — event-driven promotion, FIFO, real held offers, its own UI, 7 tests. This was #1 on the cut list and survived |
+| C2 | SSE live availability | ❌ cut (cut-list #2). The seat map polls |
+| C3 | Telescopic + scenic + demand fares | ✅ all three |
+| C4 | Trilingual UI | ⚠️ **data yes, UI no** (cut-list #4). Station names are stored and served in English, Sinhala and Tamil; interface strings are English |
+| C5 | Observability profile | ❌ config surface exists, containers do not |
 
 ### Won't have (this iteration)
 
@@ -97,7 +111,7 @@ P2 and P3 are marked ★ because they are the project. Everything else is compet
 | R4 | Time overrun on the frontend | Medium | Medium | Build the functional path first; visual polish is the last thing added | Behind at the Day 2 checkpoint → ship the list view, drop the SVG seat map |
 | R5 | Secret accidentally committed | Low | **Critical** | `.gitignore` in the first commit; pre-commit gitleaks; CI over full history | Leak → **rotate first**, scrub second |
 | R6 | Documentation squeezed at the end | **High** | High | Write ADRs *as decisions are made*, not retrospectively | Docs not started by Day 2 → cut an extra, not the docs |
-| R7 | Undiscovered concurrency bug | Medium | High | Load test the write path, not just correctness tests | (Materialised — the multi-seat deadlock, see `docs/14` §4) |
+| R7 | Undiscovered concurrency bug | Medium | High | Load test the write path, not just correctness tests | **The mitigation was never executed.** This row used to read *"(Materialised — the multi-seat deadlock, see `docs/14` §4)"*, which was false: no load test ran, and the deadlock was reasoned about rather than discovered. The risk is **open**. What exists instead is `MultiSeatDeadlockIT` (0 deadlocks sorted vs 47 unsorted) — a targeted test for the one bug I predicted, which is exactly the class of assurance a load test is supposed to *supplement*, not replace |
 | R8 | Fare figures unrealistic | Medium | Low | Flag as illustrative everywhere; keep rules as data | — |
 | R9 | Over-engineering the microservice split | Medium | Medium | Compose profiles; default topology is six containers | Cold start > 2 min → move a service behind `full` |
 
@@ -116,31 +130,34 @@ trade-offs acknowledged including the unflattering ones · cross-linked.
 
 **For submission:**
 
-- [ ] `docker compose up` works on a machine with a pruned Docker cache
-- [ ] `./scripts/demo-segment-resale.sh` demonstrates the core behaviour end to end
-- [ ] `./scripts/concurrency-proof.sh` passes: 1 winner of 50, and 2 winners on adjacent legs
-- [ ] Every Must-have verified against §2
-- [ ] README contains all four items the brief asks for
-- [ ] `gitleaks detect` clean over full history
-- [ ] Commit history reads as a progression, not a dump
-- [ ] Repository made public
-- [ ] Form submitted before Tue 4 Aug, 23:59
+- [x] `docker compose up` works on a machine with a pruned Docker cache — *green in CI's clean-machine job; never run locally, because there is no Docker daemon here*
+- [x] `./scripts/demo-segment-resale.sh` demonstrates the core behaviour end to end — *runs in that same CI job*
+- [x] `./scripts/concurrency-proof.sh` passes: 1 winner of 50, and 2 winners on adjacent legs
+- [x] Every Must-have verified against §2 — *11 of 11; M6 verified manually rather than by a committed Playwright suite*
+- [x] README contains all four items the brief asks for — *§3 decisions, §4 alternatives, §9 challenges, §10 extra credit*
+- [x] `gitleaks detect` clean over full history — *blocking CI job*
+- [x] Commit history reads as a progression, not a dump
+- [x] Repository made public
+- [ ] **Form submitted** — *the author's action. The PR is open as a draft; marking it ready for review is not mine to do*
 
 ---
 
 ## 7. Quality gates in CI
 
-| Gate | Blocking |
-|---|---|
-| Compile + lint | Yes |
-| Unit tests | Yes |
-| Integration tests (Testcontainers) | Yes |
-| **Concurrency suite** | **Yes — the project's reason for existing** |
-| **gitleaks (full history)** | **Yes — explicit brief requirement** |
-| OpenAPI breaking-change diff | Yes |
-| Coverage thresholds | Yes (95% on booking domain) |
-| SAST + dependency + image scan | Yes on High/Critical |
-| Clean-machine compose smoke test | Yes |
+The workflow has **four jobs**, all blocking. The rest of this table was aspiration; it is marked as such
+rather than left to imply a pipeline that does not exist.
+
+| Gate | Blocking | In `ci.yml`? |
+|---|---|---|
+| Compile + lint | Yes | ✅ *Backend* and *Frontend* jobs |
+| Unit tests | Yes | ✅ *Backend* |
+| Integration tests (real PostgreSQL) | Yes | ✅ *Backend* — a Postgres 16 service container, **never H2** |
+| **Concurrency suite** | **Yes — the project's reason for existing** | ✅ *Backend* |
+| **gitleaks (full history)** | **Yes — explicit brief requirement** | ✅ *Secret scan* |
+| Clean-machine compose smoke test | Yes | ✅ *Clean-machine smoke test* — brings the stack up, runs the resale demo and the concurrency proof |
+| OpenAPI breaking-change diff | Yes | ❌ **not implemented** |
+| Coverage thresholds (95% on booking domain) | Yes | ❌ **not implemented** — no coverage gate, and no measurement |
+| SAST + dependency + image scan | Yes on High/Critical | ⚠️ **partial and not ours.** GitHub's Dependabot raises alerts on this repository (there are open ones for `vite`), but nothing blocks the build |
 
 ---
 

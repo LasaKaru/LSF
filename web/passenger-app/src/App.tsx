@@ -145,6 +145,14 @@ export default function App() {
         // carries ranked alternatives, so the banner can offer a real seat and
         // resubmit with the passenger's details intact.
         setConflict(e.problem);
+        // Back to the seat map, which is where the recovery banner and the refreshed
+        // occupancy live. Without this the hold is submitted from the details screen,
+        // the 409 sets `conflict`, and *nothing on screen changes* -- the button simply
+        // stops spinning. The one-click recovery was unreachable from the only screen
+        // that can produce the conflict. Found by driving the real UI; no test caught
+        // it, because the API returns a perfectly good 409 either way.
+        setStep('seats');
+        setSeat(null);
         if (trip) api.seatMap(trip.id, from, to, 'SECOND').then(setSeatMap).catch(() => {});
       } else if (e instanceof ApiError) {
         setError(e.problem.detail);
@@ -179,7 +187,11 @@ export default function App() {
           Yathra <span className="muted">· Colombo Fort ⇄ Badulla</span>
         </h1>
         <p className="tagline">Pay for the distance you travel, not for the seat behind you.</p>
+        {/* The admin view was previously reachable only by typing the URL. */}
+        <a className="navlink" href="/admin">Departmental view →</a>
       </header>
+
+      <StepBar step={step} />
 
       {error && (
         <div className="banner error" role="alert">
@@ -420,6 +432,53 @@ export default function App() {
         tariff data before any real deployment.
       </footer>
     </div>
+  );
+}
+
+/**
+ * Where you are in the booking, and how much is left.
+ *
+ * <p>Worth the space because this flow has a *timed* middle: once a seat is held
+ * there is a countdown running, and someone who cannot see how many steps remain
+ * cannot judge whether they have time to finish. The waitlist branch replaces the
+ * seat and details steps rather than appending to them, so the bar reflects the
+ * path actually taken instead of implying the passenger skipped something.
+ *
+ * <p>Purely presentational, and `aria-hidden`: every step it names is already
+ * announced by the heading and breadcrumb of the step itself, so exposing it to a
+ * screen reader would mean reading the whole flow twice on every transition.
+ */
+function StepBar({ step }: { step: Step }) {
+  const steps: { key: Step; label: string }[] =
+    step === 'waitlist'
+      ? [
+          { key: 'search', label: 'Search' },
+          { key: 'trips', label: 'Trains' },
+          { key: 'waitlist', label: 'Waitlist' },
+          { key: 'ticket', label: 'Ticket' },
+        ]
+      : [
+          { key: 'search', label: 'Search' },
+          { key: 'trips', label: 'Trains' },
+          { key: 'seats', label: 'Seat' },
+          { key: 'details', label: 'Details' },
+          { key: 'ticket', label: 'Ticket' },
+        ];
+
+  const current = steps.findIndex((s) => s.key === step);
+
+  return (
+    <ol className="steps" aria-hidden="true">
+      {steps.map((s, i) => (
+        <li
+          key={s.key}
+          className={i === current ? 'on' : i < current ? 'done' : undefined}
+        >
+          <span className="steps-dot">{i < current ? '✓' : i + 1}</span>
+          {s.label}
+        </li>
+      ))}
+    </ol>
   );
 }
 

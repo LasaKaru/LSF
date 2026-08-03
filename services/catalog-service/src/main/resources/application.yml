@@ -22,7 +22,26 @@ spring:
 
   threads:
     virtual:
-      enabled: true
+      # DEFAULT OFF, deliberately -- and this is not caution about a new feature.
+      #
+      # On Java 21 a virtual thread that blocks inside a `synchronized` block pins
+      # its carrier. SSLSocketImpl reads inside synchronized methods, and pgjdbc's
+      # default sslmode=prefer negotiates TLS whenever the server offers it -- which
+      # every managed Postgres (RDS, Cloud SQL, Azure) does. The carrier pool is
+      # sized to the CPU count, so on a 4-core node a handful of concurrent queries
+      # starve the scheduler and requests hang FOREVER rather than failing.
+      #
+      # Observed exactly that: a second booking for an already-held seat never
+      # returned, with PostgreSQL reporting zero active backends and six handler
+      # threads parked in PGStream.receiveString. Off: 409 in 0.07s.
+      #
+      # It stays hidden in CI because postgres:16-alpine ships with ssl=off, so the
+      # connection is plaintext and nothing pins. That is precisely what makes it
+      # dangerous: it appears in production and nowhere else.
+      #
+      # This service is synchronous and DB-bound, so virtual threads buy little here
+      # anyway. Re-enable on Java 24+ (JEP 491 removes the pinning) via the env var.
+      enabled: ${THREADS_VIRTUAL_ENABLED:false}
 
 server:
   port: ${SERVER_PORT:8082}

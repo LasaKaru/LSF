@@ -98,6 +98,31 @@ button[aria-disabled='true'] { opacity: .5; cursor: not-allowed; }
 .banner.error { background: rgba(194,69,63,.14); border-color: var(--danger); }
 .alts { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
 
+/* ------------------------------------------------------------ navigation */
+.navlink { display: inline-block; font-size: .85rem; margin-bottom: 18px; }
+
+/* ----------------------------------------------------------------- steps */
+/* Presentational only (aria-hidden) -- each step already announces itself. */
+.steps { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 18px; padding: 0; font-size: .8rem; color: var(--muted); }
+.steps li { display: flex; align-items: center; gap: 6px; padding: 5px 12px 5px 6px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); }
+.steps-dot { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--surface-2); font-size: .7rem; font-weight: 700; }
+.steps li.on { color: var(--text); border-color: var(--accent); }
+.steps li.on .steps-dot { background: var(--accent); color: #fff; }
+.steps li.done .steps-dot { background: rgba(47,158,110,.3); color: var(--accent); }
+
+/* --------------------------------------------------------------- finding */
+/* The gap between load factor and seat-km utilisation. Given its own block
+   because it is the single number this dashboard exists to produce. */
+.finding {
+  display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap;
+  margin: 16px 0 12px; padding: 14px 16px;
+  border: 1px solid var(--amber); border-left-width: 4px; border-radius: 8px;
+  background: rgba(201,138,30,.10);
+}
+.finding-value { font-size: 2rem; font-weight: 700; line-height: 1; color: var(--amber); font-variant-numeric: tabular-nums; }
+.finding-unit { font-size: .9rem; font-weight: 600; }
+.finding-text { flex: 1 1 320px; font-size: .88rem; }
+
 /* ---------------------------------------------------------------- waitlist */
 /* Tabular figures so the seconds digit does not shove the rest of the clock
    sideways once a second -- a countdown that jitters reads as broken. */

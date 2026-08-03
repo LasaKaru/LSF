@@ -90,18 +90,26 @@ constraint, and it is the only one that matters for correctness.
 
 ## 4. Service catalogue
 
-| Service | Owns | Sync API | Publishes | Consumes | Scaling |
+This is the **target** topology. Four of the eight are deployed as their own containers; the rest are
+either folded into `booking-service` or not built. The **As built** column is the honest column.
+
+| Service | Owns | Sync API | Publishes | Consumes | As built |
 |---|---|---|---|---|---|
-| **booking-service** ★ | Trips (snapshot), seat inventory, bookings, segments, holds, idempotency | `GET /availability`, `GET /seat-map`, `POST /bookings`, `POST /{id}/confirm`, `DELETE /{id}` | `BookingHeld`, `BookingConfirmed`, `BookingCancelled`, `HoldExpired`, `SegmentReleased` | `TripPublished`, `PaymentAuthorised`, `PaymentFailed` | Stateless, n replicas; DB is the serialisation point |
-| **catalog-service** | Stations, routes, route stops, trains, coach types, coach layouts, schedules, trip publication | `GET /stations`, `GET /routes`, `GET /trips` | `TripPublished`, `RouteChanged` | — | Read-heavy; aggressively cached |
-| **pricing-service** | Fare bands, class/coach multipliers, scenic and demand rules, signed quotes | `POST /quotes`, `GET /fare-rules` | `QuoteIssued` | `SegmentOccupancyChanged` (for demand tier) | Stateless |
-| **payment-mock-service** | Payment intents, mock authorisation | `POST /payments`, `POST /{id}/capture` | `PaymentAuthorised`, `PaymentFailed` | `BookingHeld` | Stateless |
-| **waitlist-service** ⭐ | Waitlist entries, FIFO matching | `POST /waitlist`, `GET /waitlist/{id}` | `WaitlistPromoted` | `SegmentReleased`, `BookingCancelled`, `HoldExpired` | Single logical consumer group |
-| **admin-reporting-service** ⭐ | Denormalised read model: occupancy, revenue, resale uplift | `GET /admin/occupancy`, `GET /admin/revenue`, `GET /admin/uplift` | — | All booking events | Read-only; never touches the write path |
-| **notification-service** | Delivery log | — | — | `BookingConfirmed`, `WaitlistPromoted`, `HoldExpired` | Stateless |
-| **gateway** | Routing, authn, rate limiting | — | — | — | Stateless |
+| **booking-service** ★ | Trips (snapshot), seat inventory, bookings, segments, holds, idempotency | `GET /availability`, `GET /seat-map`, `POST /bookings`, `POST /{id}/confirm`, `DELETE /{id}` | `BookingHeld`, `BookingConfirmed`, `BookingCancelled`, `HoldExpired`, `SegmentReleased` | `TripPublished`, `PaymentAuthorised`, `PaymentFailed` | ✅ **own container.** Consumes `TripPublished` via a direct call from catalog (`POST /internal/trips`), not a broker. Payment events are not consumed — there is no payment service |
+| **catalog-service** | Stations, routes, route stops, trains, coach types, coach layouts, schedules, trip publication | `GET /stations`, `GET /routes`, `GET /trips` | `TripPublished`, `RouteChanged` | — | ✅ **own container.** Publishes trips by calling booking-service directly and keeps its own publication ledger so republication is idempotent |
+| **pricing-service** | Fare bands, class/coach multipliers, scenic and demand rules, signed quotes | `POST /quotes`, `GET /fare-rules` | `QuoteIssued` | `SegmentOccupancyChanged` (for demand tier) | ✅ **own container.** Demand tier is computed from published rules, not from live occupancy — it consumes no events |
+| **gateway** | Routing, authn, rate limiting | — | — | — | ✅ **own container** (nginx). Routing and rate limiting yes; **authn no** — see the known gap in the README |
+| **waitlist-service** ⭐ | Waitlist entries, FIFO matching | `POST /waitlist`, `GET /waitlist/{id}` | `WaitlistPromoted` | `SegmentReleased`, `BookingCancelled`, `HoldExpired` | ⚠️ **built, inside booking-service.** Full behaviour and its own UI; consumes `SegmentReleased` through the in-process outbox relay. Not split because the matcher's promotion is a real `HELD` insert that must go through the exclusion constraint — see README §4 |
+| **admin-reporting-service** ⭐ | Denormalised read model: occupancy, revenue, resale uplift | `GET /admin/occupancy`, `GET /admin/revenue`, `GET /admin/uplift` | — | All booking events | ⚠️ **built, inside booking-service.** Queries the booking tables directly rather than maintaining a projection; a read replica is a deployment decision, not an architectural one |
+| **payment-mock-service** | Payment intents, mock authorisation | `POST /payments`, `POST /{id}/capture` | `PaymentAuthorised`, `PaymentFailed` | `BookingHeld` | ❌ **not built.** Confirm is a state transition; no money moves. A half-integrated gateway would look like more work and be worth less than an honest seam |
+| **notification-service** | Delivery log | — | — | `BookingConfirmed`, `WaitlistPromoted`, `HoldExpired` | ❌ **not built.** `WaitlistPromoted` is published with the contact address on it; nothing sends the mail. A promoted passenger has to poll |
 
 ★ = owns the invariant  ⭐ = extra credit
+
+**Deployed topology: 5 containers** — `postgres`, `booking-service`, `catalog-service`, `pricing-service`,
+`gateway` (plus a one-shot `web-build` that compiles the SPA into a volume the gateway serves). That is
+deliberate and is argued in `docs/14 §5`: the brief asks for one command from a clean machine, and every
+container added is cold-start time and another thing that can time out on the reviewer's first run.
 
 ---
 

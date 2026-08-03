@@ -117,6 +117,7 @@ export function AdminDashboard() {
           Yathra Admin <span className="muted">· departmental view</span>
         </h1>
         <p className="tagline">Where the train empties out, and what resale is actually earning.</p>
+        <a className="navlink" href="/">← Passenger booking</a>
       </header>
 
       <div className="banner warn small">
@@ -175,16 +176,27 @@ export function AdminDashboard() {
                 </span>
               </div>
             </div>
+            {/* The gap IS the finding. Leaving a reader to subtract two percentages
+                themselves buries the one number this dashboard exists to produce. */}
+            {report.conventionalLoadFactorPct > report.seatKmUtilisationPct && (
+              <div className="finding">
+                <span className="finding-value">
+                  {(report.conventionalLoadFactorPct - report.seatKmUtilisationPct).toFixed(1)}
+                  <span className="finding-unit"> points</span>
+                </span>
+                <span className="finding-text">
+                  of apparent occupancy that carries <strong>no passenger</strong>. This train reports{' '}
+                  {report.conventionalLoadFactorPct}% full while only{' '}
+                  {report.seatKmUtilisationPct}% of its seat-kilometres are earning — the difference is
+                  seats riding empty between the stop a passenger left and the end of the line. That gap
+                  is the revenue the department believes is on the table, made numeric.
+                </span>
+              </div>
+            )}
             <p className="muted small">
               {report.bookableSeats} reserved seats × {report.routeKm} km ={' '}
               {report.availableSeatKm.toLocaleString()} available seat-km;{' '}
-              {report.soldSeatKm.toLocaleString()} sold.{' '}
-              {report.conventionalLoadFactorPct > report.seatKmUtilisationPct && (
-                <>
-                  The gap between those first two numbers is the problem the brief describes, made
-                  numeric.
-                </>
-              )}
+              {report.soldSeatKm.toLocaleString()} sold.
             </p>
           </section>
 
