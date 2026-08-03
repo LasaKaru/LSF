@@ -1,0 +1,81 @@
+spring:
+  application:
+    name: catalog-service
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/catalog_db}
+    username: ${SPRING_DATASOURCE_USERNAME:yathra}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:10}
+      connection-timeout: ${DB_POOL_CONNECTION_TIMEOUT_MS:3000}
+
+  flyway:
+    enabled: ${FLYWAY_ENABLED:true}
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+  threads:
+    virtual:
+      # DEFAULT OFF, deliberately -- and this is not caution about a new feature.
+      #
+      # On Java 21 a virtual thread that blocks inside a `synchronized` block pins
+      # its carrier. SSLSocketImpl reads inside synchronized methods, and pgjdbc's
+      # default sslmode=prefer negotiates TLS whenever the server offers it -- which
+      # every managed Postgres (RDS, Cloud SQL, Azure) does. The carrier pool is
+      # sized to the CPU count, so on a 4-core node a handful of concurrent queries
+      # starve the scheduler and requests hang FOREVER rather than failing.
+      #
+      # Observed exactly that: a second booking for an already-held seat never
+      # returned, with PostgreSQL reporting zero active backends and six handler
+      # threads parked in PGStream.receiveString. Off: 409 in 0.07s.
+      #
+      # It stays hidden in CI because postgres:16-alpine ships with ssl=off, so the
+      # connection is plaintext and nothing pins. That is precisely what makes it
+      # dangerous: it appears in production and nowhere else.
+      #
+      # This service is synchronous and DB-bound, so virtual threads buy little here
+      # anyway. Re-enable on Java 24+ (JEP 491 removes the pinning) via the env var.
+      enabled: ${THREADS_VIRTUAL_ENABLED:false}
+
+server:
+  port: ${SERVER_PORT:8082}
+  shutdown: graceful
+  error:
+    include-stacktrace: never
+    include-message: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+
+yathra:
+  catalog:
+    booking-horizon-days: ${BOOKING_HORIZON_DAYS:30}
+    booking-cutoff-minutes: ${BOOKING_CUTOFF_MINUTES:30}
+    booking-service-url: ${BOOKING_SERVICE_URL:http://localhost:8081}
+    auto-publish-enabled: ${AUTO_PUBLISH_ENABLED:true}
+    publish-cron: ${PUBLISH_CRON:0 15 2 * * *}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    root: ${LOG_LEVEL:INFO}
+    lk.yathra: ${LOG_LEVEL:INFO}
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%X{correlationId:-}] %logger{36} - %msg%n"

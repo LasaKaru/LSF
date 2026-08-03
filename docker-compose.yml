@@ -1,0 +1,183 @@
+# =============================================================================
+# Yathra - segment-based rail seat booking.
+#
+#   cp .env.example .env
+#   docker compose up --build
+#
+# Then:  http://localhost:3000  (passenger app)
+#        http://localhost:8080  (API)
+#
+# Six containers, no Kafka, no identity provider, no observability stack. The
+# brief asks for something that could genuinely be launched AND that starts in
+# one shot on a clean machine, and those pull in opposite directions. This is the
+# subset that demonstrates every core requirement; docs/08 §2 describes the full
+# topology and what each additional piece would carry.
+#
+# Details that make "one shot" actually true rather than aspirational:
+#   * every depends_on waits for service_healthy, not service_started -- a
+#     service that has begun booting is not one that can serve traffic
+#   * catalog-service retries trip publication with backoff, so ordering races
+#     on a cold start resolve themselves rather than needing orchestration
+#   * all seeding is idempotent, so `up` twice is safe and never duplicates
+#   * no credential is literal: every one is a ${VAR} from .env
+# =============================================================================
+
+name: yathra
+
+x-service-defaults: &service-defaults
+  restart: unless-stopped
+  environment: &common-env
+    SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-yathra}
+    SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set - copy .env.example to .env}
+    DB_POOL_MAX_SIZE: ${DB_POOL_MAX_SIZE:-20}
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    TZ: UTC
+
+services:
+  # ---------------------------------------------------------------- database
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-yathra}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_USER:-yathra}
+      CATALOG_DB_NAME: ${CATALOG_DB_NAME:-catalog_db}
+      BOOKING_DB_NAME: ${BOOKING_DB_NAME:-booking_db}
+      PRICING_DB_NAME: ${PRICING_DB_NAME:-pricing_db}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      # Bound to loopback only: the database is never exposed off the host.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-yathra} -d ${POSTGRES_USER:-yathra}"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  # ------------------------------------------------- booking (the invariant)
+  booking-service:
+    <<: *service-defaults
+    build:
+      context: ./services
+      args:
+        SERVICE: booking-service
+    environment:
+      <<: *common-env
+      SERVER_PORT: 8081
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${BOOKING_DB_NAME:-booking_db}
+      QUOTE_SIGNING_KEY: ${QUOTE_SIGNING_KEY:?QUOTE_SIGNING_KEY must be set - see .env.example}
+      BOOKING_HOLD_TTL_SECONDS: ${BOOKING_HOLD_TTL_SECONDS:-600}
+      HOLD_SWEEP_INTERVAL_SECONDS: ${HOLD_SWEEP_INTERVAL_SECONDS:-15}
+      BOOKING_CUTOFF_MINUTES: ${BOOKING_CUTOFF_MINUTES:-30}
+      MAX_SEATS_PER_BOOKING: ${MAX_SEATS_PER_BOOKING:-6}
+      MAX_ACTIVE_HOLDS_PER_CONTACT: ${MAX_ACTIVE_HOLDS_PER_CONTACT:-6}
+      SEAT_SELECTION_STRATEGY: ${SEAT_SELECTION_STRATEGY:-FRAGMENTATION_MINIMISING}
+      SEGMENT_TURNAROUND_BUFFER_STOPS: ${SEGMENT_TURNAROUND_BUFFER_STOPS:-0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/actuator/health/readiness"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+
+  # ------------------------------------------------------------------ pricing
+  pricing-service:
+    <<: *service-defaults
+    build:
+      context: ./services
+      args:
+        SERVICE: pricing-service
+    environment:
+      <<: *common-env
+      SERVER_PORT: 8083
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${PRICING_DB_NAME:-pricing_db}
+      BOOKING_SERVICE_URL: http://booking-service:8081
+      # The SAME key booking-service verifies with. In production both read it
+      # from the platform secret store under this identical variable name.
+      QUOTE_SIGNING_KEY: ${QUOTE_SIGNING_KEY:?QUOTE_SIGNING_KEY must be set}
+      QUOTE_TTL_SECONDS: ${QUOTE_TTL_SECONDS:-600}
+      DEMAND_PRICING_ENABLED: ${DEMAND_PRICING_ENABLED:-false}
+      FEATURE_SCENIC_SURCHARGE_ENABLED: ${FEATURE_SCENIC_SURCHARGE_ENABLED:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      booking-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8083/actuator/health/readiness"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+
+  # ------------------------------------------------------------------ catalog
+  catalog-service:
+    <<: *service-defaults
+    build:
+      context: ./services
+      args:
+        SERVICE: catalog-service
+    environment:
+      <<: *common-env
+      SERVER_PORT: 8082
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${CATALOG_DB_NAME:-catalog_db}
+      BOOKING_SERVICE_URL: http://booking-service:8081
+      BOOKING_HORIZON_DAYS: ${BOOKING_HORIZON_DAYS:-30}
+      BOOKING_CUTOFF_MINUTES: ${BOOKING_CUTOFF_MINUTES:-30}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      booking-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8082/actuator/health/readiness"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 20s
+
+  # ------------------------------------------------- gateway + passenger app
+  gateway:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+      - web-dist:/usr/share/nginx/html:ro
+    ports:
+      - "${GATEWAY_PORT:-8080}:8080"
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      booking-service:
+        condition: service_healthy
+      catalog-service:
+        condition: service_healthy
+      pricing-service:
+        condition: service_healthy
+      web-build:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # One-shot: builds the SPA into a volume the gateway serves. Keeping nginx as
+  # a stock image (rather than baking a custom one) means no rebuild of the
+  # gateway when only the frontend changes.
+  web-build:
+    build:
+      context: ./web/passenger-app
+    volumes:
+      - web-dist:/output
+    command: sh -c "cp -r /app/dist/. /output/ && echo 'web assets published'"
+    restart: "no"
+
+volumes:
+  pgdata:
+  web-dist:

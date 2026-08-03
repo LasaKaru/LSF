@@ -1,0 +1,100 @@
+spring:
+  application:
+    name: booking-service
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/booking_db}
+    username: ${SPRING_DATASOURCE_USERNAME:yathra}
+    # No default. A missing database password must fail loudly at startup, never
+    # silently fall back to something guessable.
+    password: ${SPRING_DATASOURCE_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:20}
+      connection-timeout: ${DB_POOL_CONNECTION_TIMEOUT_MS:3000}
+      pool-name: booking-pool
+
+  flyway:
+    enabled: ${FLYWAY_ENABLED:true}
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+
+  threads:
+    virtual:
+      # DEFAULT OFF, deliberately -- and this is not caution about a new feature.
+      #
+      # On Java 21 a virtual thread that blocks inside a `synchronized` block pins
+      # its carrier. SSLSocketImpl reads inside synchronized methods, and pgjdbc's
+      # default sslmode=prefer negotiates TLS whenever the server offers it -- which
+      # every managed Postgres (RDS, Cloud SQL, Azure) does. The carrier pool is
+      # sized to the CPU count, so on a 4-core node a handful of concurrent queries
+      # starve the scheduler and requests hang FOREVER rather than failing.
+      #
+      # Observed exactly that: a second booking for an already-held seat never
+      # returned, with PostgreSQL reporting zero active backends and six handler
+      # threads parked in PGStream.receiveString. Off: 409 in 0.07s.
+      #
+      # It stays hidden in CI because postgres:16-alpine ships with ssl=off, so the
+      # connection is plaintext and nothing pins. That is precisely what makes it
+      # dangerous: it appears in production and nowhere else.
+      #
+      # This service is synchronous and DB-bound, so virtual threads buy little here
+      # anyway. Re-enable on Java 24+ (JEP 491 removes the pinning) via the env var.
+      enabled: ${THREADS_VIRTUAL_ENABLED:false}
+
+server:
+  port: ${SERVER_PORT:8081}
+  shutdown: graceful
+  error:
+    include-stacktrace: never
+    include-message: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+      base-path: /actuator
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+  health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+  metrics:
+    tags:
+      service: booking-service
+
+yathra:
+  booking:
+    hold-ttl-seconds: ${BOOKING_HOLD_TTL_SECONDS:600}
+    sweep-interval-seconds: ${HOLD_SWEEP_INTERVAL_SECONDS:15}
+    sweep-batch-size: ${HOLD_SWEEP_BATCH_SIZE:500}
+    cutoff-minutes: ${BOOKING_CUTOFF_MINUTES:30}
+    max-seats-per-booking: ${MAX_SEATS_PER_BOOKING:6}
+    max-active-holds-per-contact: ${MAX_ACTIVE_HOLDS_PER_CONTACT:6}
+    retry-max-attempts: ${BOOKING_RETRY_MAX_ATTEMPTS:3}
+    retry-backoff-ms: ${BOOKING_RETRY_BACKOFF_MS:50}
+    turnaround-buffer-stops: ${SEGMENT_TURNAROUND_BUFFER_STOPS:0}
+    seat-selection-strategy: ${SEAT_SELECTION_STRATEGY:FRAGMENTATION_MINIMISING}
+    outbox-relay-interval-ms: ${OUTBOX_RELAY_INTERVAL_MS:1000}
+    quote-signing-key: ${QUOTE_SIGNING_KEY}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    root: ${LOG_LEVEL:INFO}
+    lk.yathra: ${LOG_LEVEL:INFO}
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%X{correlationId:-}] %logger{36} - %msg%n"

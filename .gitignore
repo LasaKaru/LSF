@@ -25,6 +25,9 @@ replay_pid*
 node_modules/
 dist/
 dist-ssr/
+# tsc's incremental build cache -- a local artifact, not source. Tracked by
+# accident originally, so every build produced a spurious one-line diff.
+*.tsbuildinfo
 .vite/
 *.local
 npm-debug.log*

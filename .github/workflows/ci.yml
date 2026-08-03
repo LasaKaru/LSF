@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  # The secret scan runs first and on its own. The brief asks for it explicitly,
+  # and a leaked credential is not something you fix in the next release.
+  secrets:
+    name: Secret scan (full history)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # the whole history, not just the diff
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  backend:
+    name: Backend (unit + integration + concurrency)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: yathra
+          POSTGRES_PASSWORD: ci-password
+          POSTGRES_DB: booking_db
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U yathra"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      # Point the suite at the service container. Without this the tests start
+      # their own Testcontainer, which also works but is slower in CI.
+      TEST_PG_URL: jdbc:postgresql://localhost:5432/booking_db
+      TEST_PG_USER: yathra
+      TEST_PG_PASSWORD: ci-password
+      SPRING_DATASOURCE_PASSWORD: ci-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+      - name: Build and test
+        working-directory: services
+        # The concurrency suite is a blocking gate: if the invariant can break,
+        # nothing else about this project matters.
+        run: mvn -B verify
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - working-directory: web/passenger-app
+        run: npm install --no-audit --no-fund
+      - working-directory: web/passenger-app
+        run: npm run build
+
+  compose:
+    name: Clean-machine smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: docker compose up
+        run: |
+          cp .env.example .env
+          docker compose up --build -d
+      - name: Wait for the stack
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/healthz >/dev/null 2>&1; then
+              echo "gateway healthy after ${i}0s"; exit 0
+            fi
+            sleep 10
+          done
+          docker compose logs --tail 100
+          exit 1
+      - name: Demonstrate segment resale end to end
+        run: ./scripts/demo-segment-resale.sh http://localhost:8080
+      - name: Prove the invariant under concurrency
+        run: ./scripts/concurrency-proof.sh http://localhost:8080 30
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail 200
